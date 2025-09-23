@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
+#include <stdarg.h>
+
+struct timespec start, end;
 
 typedef struct {
     int rows;
@@ -10,6 +14,7 @@ typedef struct {
     int *col_ind;  // size = nnz
     double *val;   // size = nnz
 } CSRMatrix;
+
 
 void freeCSRMatrix(CSRMatrix *M) {
     if (!M) return;  // null check
@@ -63,8 +68,8 @@ CSRMatrix multiplyCSR(const CSRMatrix *B, const CSRMatrix *C) {
                 if (C->col_ind[k] == i) {
                     col_ind[nnz] = j;
                     val[nnz] = B->val[p] * C->val[k];
-                    printf("i: %d\tj: %d\n", i, j);
-                    printf("%.2f\n", val[nnz]);
+                    // printf("i: %d\tj: %d\n", i, j);
+                    // printf("%.2f\n", val[nnz]);
                     nnz++;
                     // break;
                 }
@@ -167,11 +172,45 @@ CSRMatrix generate_random_CSR(int rows, int cols, int nnz_per_row) {
     return M;
 }
 
-int main() {
-    CSRMatrix M = generate_random_CSR(5, 6, 3);
-    printCSRDense(&M);
-    printCSR(&M);
-    freeCSRMatrix(&M);
+
+// 1. Run the experiment (multiplyCSR) for increasing tensor dimension. Keep the sparsity per row as same for both matrix and same percentage of sparsity.
+int experiment_1(int dimension_count, float sparsity)
+{
+    char filename[256];
+
+    // create file name dynamically
+    snprintf(filename, sizeof(filename), "exper1_dim%d_sparsity%.2f.csv",
+             dimension_count, sparsity);
+    
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        perror("File opening failed");
+        return 1;
+    }
+    fprintf(fp, "dimension,elapsed_time\n"); // CSV header
+
+
+    for (int dimension = 4; dimension < dimension_count; dimension++)
+    {
+        int nnz_count_per_row = (int)round(dimension*sparsity);
+        CSRMatrix B = generate_random_CSR(dimension, dimension, nnz_count_per_row);
+        CSRMatrix C = generate_random_CSR(dimension, dimension, nnz_count_per_row);
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        CSRMatrix A = multiplyCSR(&B, &C);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        // printf("Time: %.9f seconds\n", elapsed);
+        fprintf(fp, "%d,%.9f\n", dimension, elapsed);
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    int dimension_count = atoi(argv[1]);
+    float sparsity = atof(argv[2]);
+    experiment_1(dimension_count, sparsity);
     return 0;
 }
 
