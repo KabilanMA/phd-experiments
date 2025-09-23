@@ -70,9 +70,8 @@ def gen_c_function(einsum_spec, in_names, out_name, dims_map, func_name="compute
     operand_offsets = []
     for op_idx, op in enumerate(inputs):
         idxs = indices_from_operand(op)
-        # For operand, compute offset expression according to row-major layout.
-        # Build multiplier list using the operand's own index ordering.
-        # Example: operand "ij" with dims i_len, j_len -> offset = i * j_len + j
+        # compute linear offset for this operand according to its own index order
+        # row-major: rightmost index varies fastest
         offset_terms = []
         for pos, idx in enumerate(idxs):
             right_dims = idxs[pos+1:]

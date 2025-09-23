@@ -201,6 +201,9 @@ int experiment_1(int dimension_count, float sparsity)
         double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
         // printf("Time: %.9f seconds\n", elapsed);
         fprintf(fp, "%d,%.9f\n", dimension, elapsed);
+        freeCSRMatrix(&A);
+        freeCSRMatrix(&B);
+        freeCSRMatrix(&C);
     }
 
     fclose(fp);
