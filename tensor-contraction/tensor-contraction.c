@@ -39,6 +39,7 @@ void freeCSRMatrix(CSRMatrix *M) {
 }
 
 // Multiply A = B * C (element wise row-col multiplication)
+// A = einsum("ij,ji->ij", B, C)
 CSRMatrix multiplyCSR(const CSRMatrix *B, const CSRMatrix *C) {
     if (B->cols != C->rows) {
         fprintf(stderr, "Dimension mismatch!\n");
@@ -54,6 +55,86 @@ CSRMatrix multiplyCSR(const CSRMatrix *B, const CSRMatrix *C) {
 
     int nnz = 0;
     row_ptr[0] = nnz;
+    // iterate over the row of B
+    for (int i = 0; i < n; i++) {
+        // iterate over the non-zeros of i-th row
+        for (int p = B->row_ptr[i]; p < B->row_ptr[i+1]; p++) {
+            // column index of the non-zero in i-th row in dense matrix
+            int j = B->col_ind[p];
+
+            // search in the C matrix
+            // iterate over the non-zeros of j-th row of C
+            for (int k = C->row_ptr[j]; k < C->row_ptr[j+1]; k++) {
+                // C->col_ind[k] === column index of the non-zero in j-th row in C dense matrix
+                if (C->col_ind[k] == i) {
+                    col_ind[nnz] = j;
+                    val[nnz] = B->val[p] * C->val[k];
+                    // printf("i: %d\tj: %d\n", i, j);
+                    // printf("%.2f\n", val[nnz]);
+                    nnz++;
+                    // break;
+                }
+            }
+        }
+        row_ptr[i+1] = nnz;
+    }
+    row_ptr[n] = nnz;
+
+    CSRMatrix A = {B->rows, C->cols, nnz, row_ptr, col_ind, val};
+    return A;
+}
+
+// Very hard and inefficient to do this for CSR because unless you compute
+// the entire operations, cannot build the row_ptr of the resultant tensor
+// Multiply A = B * C (element wise col-row einsum)
+// A = einsum("ij,ji->ij", B, C)
+CSRMatrix multiplyCSR_(const CSRMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+    int *row_ptr = calloc(n + 1, sizeof(int));
+    int capacity = B->nnz > C->nnz ? B->nnz : C->nnz;
+    int *col_ind = malloc(capacity * sizeof(int));
+    double *val = malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = nnz;
+    // iterating over the col of B
+    for (int j = 0; j < m; j++) {
+
+        // iterate over the col_ind of B (iterate over the non-zeros of j-th column
+        for (int q = 0 ; q < capacity; q++) {
+            int col_ind_value = B->col_ind[q];
+            if (j == col_ind_value)
+            {
+                // There is an element in the j-th column. 
+                // Now I have to find its row correspondent
+                for (int p = 0; p < n+1; p++)
+                {
+                    if (B->row_ptr[p] > q)
+                    {
+                        // p-1 has to be the row index of this element in B
+                        // int i = p - 1;
+                        for (int h = C->row_ptr[j]; h < C->row_ptr[j+1]; h++)
+                        {
+                            if (C->col_ind[h] == p-1)
+                            {
+                                val[nnz] = B->val[q] * C->val[h];
+                                col_ind[nnz] = j;
+                                nnz++;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
     // iterate over the row of B
     for (int i = 0; i < n; i++) {
         // iterate over the non-zeros of i-th row
@@ -210,10 +291,99 @@ int experiment_1(int dimension_count, float sparsity)
     return 0;
 }
 
+// Keep the sparsity of B in low (10%) and keep increasing the sparsity of C with dimension 1000
+// const_sparsity1 is the constent sparsity for B and when will give different values to check the elapsed time
+int experiment_2(float const_sparsity1) 
+{
+    char filename[256];
+    int dimension = 1000;
+    float max_sparsity = 0.90;
+
+    // create file name dynamically
+    snprintf(filename, sizeof(filename), "exper2_sparsity%.2f.csv",
+            const_sparsity1);
+    
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        perror("File opening failed");
+        return 1;
+    }
+    fprintf(fp, "sparsity,elapsed_time\n"); // CSV header
+
+    float incrementor = 0.05;
+
+    for (float sparsityC = 0.1; sparsityC <= max_sparsity+0.001; sparsityC+=incrementor)
+    {
+        int max_nnz_per_row_B = (int)round(dimension*const_sparsity1);
+        CSRMatrix B = generate_random_CSR(dimension, dimension, max_nnz_per_row_B);
+        int max_nnz_per_row_C = (int)round(dimension*sparsityC);
+        CSRMatrix C = generate_random_CSR(dimension, dimension, max_nnz_per_row_C);
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        CSRMatrix A = multiplyCSR(&B, &C);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        fprintf(fp, "%.2f,%.9f\n", sparsityC, elapsed);
+        freeCSRMatrix(&A);
+        freeCSRMatrix(&B);
+        freeCSRMatrix(&C);
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+// Keep the sparsity of C in low (10%) and keep increasing the sparsity of B with dimension 1000
+// const_sparsity1 is the constent sparsity for C and when will give different values to check the elapsed time
+int experiment_3(float const_sparsity1) 
+{
+    char filename[256];
+    int dimension = 1000;
+    float max_sparsity = 0.90;
+
+    // create file name dynamically
+    snprintf(filename, sizeof(filename), "exper3_sparsity%.2f.csv",
+            const_sparsity1);
+    
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        perror("File opening failed");
+        return 1;
+    }
+    fprintf(fp, "sparsity,elapsed_time\n"); // CSV header
+
+    float incrementor = 0.05;
+
+    for (float sparsityB = 0.1; sparsityB <= max_sparsity+0.001; sparsityB+=incrementor)
+    {
+        int max_nnz_per_row_C = (int)round(dimension*const_sparsity1);
+        CSRMatrix C = generate_random_CSR(dimension, dimension, max_nnz_per_row_C);
+        int max_nnz_per_row_B = (int)round(dimension*sparsityB);
+        CSRMatrix B = generate_random_CSR(dimension, dimension, max_nnz_per_row_B);
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        CSRMatrix A = multiplyCSR(&B, &C);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        fprintf(fp, "%.2f,%.9f\n", sparsityB, elapsed);
+        freeCSRMatrix(&A);
+        freeCSRMatrix(&B);
+        freeCSRMatrix(&C);
+    }
+
+    fclose(fp);
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
-    int dimension_count = atoi(argv[1]);
-    float sparsity = atof(argv[2]);
-    experiment_1(dimension_count, sparsity);
+    // int dimension_count = atoi(argv[1]);
+    // float sparsity = atof(argv[2]);
+    // experiment_1(dimension_count, sparsity);
+
+    // float sparsityB = atof(argv[1]);
+    // experiment_2(sparsityB);
+
+    float sparsityC = atof(argv[1]);
+    experiment_3(sparsityC);
+
     return 0;
 }
 
