@@ -3,6 +3,7 @@
 #include <time.h>
 #include <math.h>
 #include <stdarg.h>
+#include <linux/time.h>
 
 struct timespec start, end;
 
@@ -373,6 +374,8 @@ int experiment_3(float const_sparsity1)
     return 0;
 }
 
+
+
 int main(int argc, char *argv[]) {
     // int dimension_count = atoi(argv[1]);
     // float sparsity = atof(argv[2]);
@@ -381,8 +384,8 @@ int main(int argc, char *argv[]) {
     // float sparsityB = atof(argv[1]);
     // experiment_2(sparsityB);
 
-    float sparsityC = atof(argv[1]);
-    experiment_3(sparsityC);
+    // float sparsityC = atof(argv[1]);
+    // experiment_3(sparsityC);
 
     return 0;
 }

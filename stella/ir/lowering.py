@@ -12,4 +12,4 @@ def lower_to_loops(op: EinsumOp):
               Load(op.inputs[0], ("i", "j")),
               Load(op.inputs[1], ("j", "i"))))
     ]
-    return LoopNest(i, [LoopNest(j, body)])
+    return LoopNest(i, [LoopNest(j, body, "V")], "VC")
