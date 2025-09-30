@@ -29,6 +29,6 @@ def tensor_operation(equation: str, *inputs: Tensor, operator: str = "*") -> Ein
     # Build High-level IR
     output_tensor = Tensor("A", output_order, output_dimension)
     print(operator.upper())
-    op = EinsumOp(output_tensor, equation, inputs, TENSOR_OP[operator.upper()])
+    op = EinsumOp(output_tensor, equation, inputs, find_operator(operator))
     
     return op
