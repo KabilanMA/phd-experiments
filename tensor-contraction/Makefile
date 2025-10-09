@@ -1,7 +1,7 @@
 # Makefile for tensor-contraction
 
 CXX = g++
-CXXFLAGS = -std=c++11 -I include
+CXXFLAGS = -std=c++17 -I include
 LDFLAGS =
 LIBS =
 SRC_DIRS = ./src   # Add other directories with cpp files

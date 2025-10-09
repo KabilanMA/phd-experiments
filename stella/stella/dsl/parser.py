@@ -1,6 +1,6 @@
 import sys
 from typing import Tuple
-from ir.ir import Tensor, TENSOR_OP
+from stella.ir.ir import Tensor, TENSOR_OP
 
 
 def sanity_check_equation(equation: str, tensor_count: int) -> bool:

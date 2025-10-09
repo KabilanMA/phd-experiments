@@ -7,6 +7,7 @@
 #include <time.h>
 #include <math.h>
 #include <stdarg.h>
+// #include <linux/time.h>
 
 typedef struct COOMatrix {
     int rows;
@@ -33,5 +34,35 @@ typedef struct {
     int *col_ind;  // size = nnz
     double *val;   // size = nnz
 } CSRMatrix;
+
+// void freeCSRMatrix(CSRMatrix *M) {
+//     if (!M) return;  // null check
+
+//     if (M->row_ptr) {
+//         free(M->row_ptr);
+//         M->row_ptr = NULL;
+//     }
+//     if (M->col_ind) {
+//         free(M->col_ind);
+//         M->col_ind = NULL;
+//     }
+//     if (M->val) {
+//         free(M->val);
+//         M->val = NULL;
+//     }
+
+//     // Reset metadata
+//     M->rows = 0;
+//     M->cols = 0;
+//     M->nnz = 0;
+// }
+
+void COO_to_CSR(const COOMatrix &coo, CSRMatrix &csr);
+void freeCSRMatrix(CSRMatrix *M);
+CSRMatrix generate_random_CSR(int rows, int cols, int nnz_per_row);
+void printCSRDense(const CSRMatrix *M);
+void printCSR(const CSRMatrix *M);
+void printCOO(const COOMatrix &M);
+void printCOODense(const COOMatrix &M);
 
 #endif // FORMATS_HPP

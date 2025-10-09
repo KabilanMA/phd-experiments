@@ -5,4 +5,4 @@
 
 using namespace taco;
 
-void kernel_1_1(COOMatrix &B, COOMatrix &C);
+double taco_kernel_1_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &workspace);

@@ -26,6 +26,10 @@ class Tensor:
         self.dimensions = dimensions
         self.values = []
         self.value_indices = []
+        self._row_ptr = []
+        self._col_ind = []
+        self.csr_values = []
+        # TODO: Add more storage formats
     
     def __str__(self) -> str:
         return f"Tensor(name={self.name}, order={self.order}, dimensions={self.dimensions}, nnz={len(self.values)})"
@@ -36,6 +40,12 @@ class Tensor:
             return
         self.values.append(value)
         self.value_indices.append(indices)
+    
+    def pack(self, format: Storage) -> None:
+        if format == Storage.CSR:
+            print(f"[Info] Packing tensor {self.name} into CSR format")
+
+
 
 class Matrix(Tensor):
     def __init__(self, name: str, format: Storage, dimensions: Tuple[int]):
@@ -93,14 +103,76 @@ class IfStmt:
 #         self.value = value
 
 #     def __str__(self): return f"Store({self.tensor.name}[{','.join(self.indices)}] = {self.value})"
+class StorageDataType(Enum):
+    INT = 0
+    FLOAT = 1
+    DOUBLE = 2
+
+class StoreList:
+    def __init__(self, name: str, size: int = 0, data_type: StorageDataType = StorageDataType.INT):
+        self.name = name
+        self.size = size
+        self.storage_data_type = data_type
+
+    def __str__(self):
+        return f"{self.name} with size {self.size}"
+    
+    def emit_decl(self):
+        if self.storage_data_type == StorageDataType.INT:
+            return f"int *{self.name} = malloc({self.size} * sizeof(int));"
+        elif self.storage_data_type == StorageDataType.FLOAT:
+            return f"float *{self.name} = malloc({self.size} * sizeof(float));"
+        elif self.storage_data_type == StorageDataType.DOUBLE:
+            return f"double *{self.name} = malloc({self.size} * sizeof(double));"
+    
+    def emit_free(self):
+        return f"free({self.name});"
+    
+    def emit_store_val(self, index: str):
+        return f"{self.name}[{index}]"
+
+class Number:
+    def __init__(self, name: str, type: StorageDataType):
+        self.name = name
+        self.type = type
+
+    def __str__(self):
+        return f"Number({self.name}, type={self.type})"
+    
+    def emit_decl(self, value: Union[Number, str]):
+        if self.type == StorageDataType.INT:
+            return f"int {self.name} = {value};"
+        elif self.type == StorageDataType.FLOAT:
+            return f"float {self.name} = {value};"
+        elif self.type == StorageDataType.DOUBLE:
+            return f"double {self.name} = {value};"
+    
+    def emit_assign(self, value: Union[Number, str]):
+        return f"{self.name} = {value};"
+    
+
+    
+class AssignList:
+    def __init__(self, lhs: Store, rhs: Load):
+        self.lhs = lhs
+        self.rhs = rhs
+
+    def __str__(self):
+        return f"Assign(lhs={self.lhs}, rhs={self.rhs})"
+    
+    def emit(self):
+        return f"{self.lhs.emit()} = {self.rhs.emit()};"
+
 
 class Store:
-    def __init__(self, tensor: Tensor, index: str, value):
-        self.tensor = tensor
+    def __init__(self, store_value: Tensor, index: str, value):
+        self.tensor = store_value
         self.index = index
         self.value = value
 
-    def __str__(self): return f"Store({self.tensor.name}[{','.join(self.index)}] = {self.value})"
+    def __str__(self): 
+        return f"Store({self.tensor}[{','.join(self.index)}] = {self.value})"
+    
 
 
 @dataclass
