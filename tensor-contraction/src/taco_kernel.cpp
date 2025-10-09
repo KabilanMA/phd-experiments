@@ -24,7 +24,9 @@ double taco_kernel_1_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &w
     Tensor<double> Ct({C.cols, C.rows}, csc);
     B_taco.pack();
     C_taco.pack();
-    return __taco_kernel_1_1(B_taco, C_taco, workspace);
+    double elapsed = __taco_kernel_1_1(B_taco, C_taco, workspace);
+
+    return elapsed;
 }
 
 static double __taco_kernel_1_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &workspace) 
@@ -34,7 +36,7 @@ static double __taco_kernel_1_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
     Format dense_f({Dense, Dense});
     IndexVar i, j;
 
-    Tensor<double> Ct_1({C.getDimension(1), C.getDimension(0)}, csc);
+    // Tensor<double> Ct_1({C.getDimension(1), C.getDimension(0)}, csc);
     Tensor<double> Ct_2({C.getDimension(1), C.getDimension(0)}, csc);
     Tensor<double> A({B.getDimension(0), B.getDimension(0)}, csr);
     
@@ -51,6 +53,7 @@ static double __taco_kernel_1_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
     workspace = A;
+
     return elapsed;
 }
 

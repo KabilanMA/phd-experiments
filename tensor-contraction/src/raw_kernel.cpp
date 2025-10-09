@@ -58,6 +58,9 @@ double raw_kernel_1_1(const COOMatrix &B, const COOMatrix &C)
     clock_gettime(CLOCK_MONOTONIC, &start);
     CSRMatrix* result = _raw_kernel_1_1(&csrB, &csrC);
     clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(result);
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     return elapsed;
 }

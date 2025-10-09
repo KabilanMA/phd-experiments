@@ -5,6 +5,15 @@
 #include "taco_kernel.hpp"
 #include "rand_gen.hpp"
 #include "raw_kernel.hpp"
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
+#include <iostream>
+#include <chrono>
+#include <thread>
+#include <string>
+#include <sys/resource.h>
 
 
 using namespace taco;
@@ -74,12 +83,85 @@ bool save_to_csv(const std::string& filename, Args&&... args)
     return true;
 }
 
+
+// Helper: run kernel safely in a child process
+double run_kernel_safe(std::function<double()> kernel_func,
+                       int timeout_seconds,
+                       size_t max_memory_bytes,
+                       bool& success)
+{
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe failed");
+        success = false;
+        return -1.0;
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork failed");
+        success = false;
+        return -1.0;
+    }
+
+    if (pid == 0) { // Child
+        close(pipefd[0]); // close read end
+
+        // Set memory limit
+        struct rlimit rl;
+        rl.rlim_cur = rl.rlim_max = max_memory_bytes;
+        setrlimit(RLIMIT_AS, &rl);
+
+        // Run kernel
+        double result = kernel_func();
+
+        // Send result to parent
+        write(pipefd[1], &result, sizeof(result));
+        close(pipefd[1]);
+        exit(0);
+    } else { // Parent
+        close(pipefd[1]); // close write end
+
+        int waited = 0;
+        int status;
+        while (waited < timeout_seconds) {
+            pid_t ret = waitpid(pid, &status, WNOHANG);
+            if (ret != 0) break; // child finished
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            waited++;
+        }
+
+        if (waited >= timeout_seconds) {
+            std::cerr << "Kernel timed out! Killing process " << pid << "\n";
+            kill(pid, SIGKILL);
+            success = false;
+            return -1.0;
+        }
+
+        double result = -1.0;
+        ssize_t n = read(pipefd[0], &result, sizeof(result));
+        close(pipefd[0]);
+
+        if (n != sizeof(result) || !WIFEXITED(status)) {
+            std::cerr << "Kernel failed (memory limit or crash)\n";
+            success = false;
+            return -1.0;
+        }
+
+        success = true;
+        return result;
+    }
+}
+
 /**
  * Sparsity == percentage of nnz per row
  */
 void experiment2(float sparsity_incrementor)
 {
     float sparsity = sparsity_incrementor;
+    const int timeout_seconds = 10; // max runtime per kernel
+    const size_t max_memory_bytes = 20L * 1024 * 1024 * 1024; // 20 GiB per kernel
+
     while (sparsity < 1)
     {
         // multiple runs to average out
@@ -93,9 +175,29 @@ void experiment2(float sparsity_incrementor)
                 COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
                 COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
                 Tensor<double> workspace;
-                double taco_time = taco_kernel_1_1(B, C, workspace);
-                double raw_kernel_time = raw_kernel_1_1(B, C);
+
+                bool success = false;
+                double taco_time = run_kernel_safe([&]() {
+                    return taco_kernel_1_1(B, C, workspace);
+                }, timeout_seconds, max_memory_bytes, success);
+
+                if (!success) {
+                    std::cout << "Skipping this run due to taco kernel failure\n";
+                    continue;
+                }
+
+                double raw_kernel_time = run_kernel_safe([&]() {
+                    return raw_kernel_1_1(B, C);
+                }, timeout_seconds, max_memory_bytes, success);
+
+                freeCOOMatrix(&B);
+                freeCOOMatrix(&C);
                 
+                if (!success) {
+                    std::cout << "Skipping this run due to raw kernel failure\n";
+                    continue;
+                }
+
                 // Save results to CSV
                 save_to_csv(results_file, dim, nnz_per_row, sparsity, taco_time, raw_kernel_time);
                 
@@ -108,7 +210,6 @@ void experiment2(float sparsity_incrementor)
         }
         sparsity += sparsity_incrementor;
     }
-    
 }
 
 int main(int argc, char *argv[])

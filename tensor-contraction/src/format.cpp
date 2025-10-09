@@ -23,6 +23,19 @@ void freeCSRMatrix(CSRMatrix *M)
     M->nnz = 0;
 }
 
+void freeCOOMatrix(COOMatrix *M) 
+{
+    if (!M) return;  // null check
+
+    M->row_indices.clear();
+    M->col_indices.clear();
+    M->values.clear();
+
+    // Optional: reset metadata
+    M->rows = 0;
+    M->cols = 0;
+}
+
 void printCSR(const CSRMatrix *M) 
 {
     printf("CSR Matrix: %d x %d, nnz = %d\n", M->rows, M->cols, M->nnz);

@@ -26,7 +26,7 @@ typedef struct CSCMatrix {
     double *val;   // size = nnz
 } CSCMatrix;
 
-typedef struct {
+typedef struct CSRMatrix {
     int rows;
     int cols;
     int nnz;       // number of non-zeros
@@ -35,30 +35,9 @@ typedef struct {
     double *val;   // size = nnz
 } CSRMatrix;
 
-// void freeCSRMatrix(CSRMatrix *M) {
-//     if (!M) return;  // null check
-
-//     if (M->row_ptr) {
-//         free(M->row_ptr);
-//         M->row_ptr = NULL;
-//     }
-//     if (M->col_ind) {
-//         free(M->col_ind);
-//         M->col_ind = NULL;
-//     }
-//     if (M->val) {
-//         free(M->val);
-//         M->val = NULL;
-//     }
-
-//     // Reset metadata
-//     M->rows = 0;
-//     M->cols = 0;
-//     M->nnz = 0;
-// }
-
 void COO_to_CSR(const COOMatrix &coo, CSRMatrix &csr);
 void freeCSRMatrix(CSRMatrix *M);
+void freeCOOMatrix(COOMatrix *M);
 CSRMatrix generate_random_CSR(int rows, int cols, int nnz_per_row);
 void printCSRDense(const CSRMatrix *M);
 void printCSR(const CSRMatrix *M);
