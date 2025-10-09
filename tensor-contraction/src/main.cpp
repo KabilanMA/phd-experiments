@@ -165,38 +165,41 @@ void experiment2(float sparsity_incrementor)
     while (sparsity < 1)
     {
         // multiple runs to average out
-        for (size_t run = 0; run < 10; run++)
+        for (size_t run = 0; run < 1; run++)
         {
             std::string results_file = create_results_file(("results_" + std::to_string(run) + ".csv"), "Dimension,NNZ_per_row,Sparsity,TACO_Time,Raw_Time", "experiment2");
             // for different matrix sizes
-            for (int dim = 3; dim < 1000; dim++)
+            for (int dim = 3; dim < 5000; dim++)
             {
                 int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
                 COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
                 COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
                 Tensor<double> workspace;
 
-                bool success = false;
-                double taco_time = run_kernel_safe([&]() {
-                    return taco_kernel_1_1(B, C, workspace);
-                }, timeout_seconds, max_memory_bytes, success);
+                // bool success = false;
+                // double taco_time = run_kernel_safe([&]() {
+                //     return taco_kernel_1_1(B, C, workspace);
+                // }, timeout_seconds, max_memory_bytes, success);
 
-                if (!success) {
-                    std::cout << "Skipping this run due to taco kernel failure\n";
-                    continue;
-                }
+                // if (!success) {
+                //     std::cout << "Skipping this run due to taco kernel failure\n";
+                //     continue;
+                // }
 
-                double raw_kernel_time = run_kernel_safe([&]() {
-                    return raw_kernel_1_1(B, C);
-                }, timeout_seconds, max_memory_bytes, success);
+                // double raw_kernel_time = run_kernel_safe([&]() {
+                //     return raw_kernel_1_1(B, C);
+                // }, timeout_seconds, max_memory_bytes, success);
+                double raw_kernel_time = raw_kernel_1_1(B, C);
+                double taco_time = taco_kernel_1_1(B, C, workspace);
+
 
                 freeCOOMatrix(&B);
                 freeCOOMatrix(&C);
                 
-                if (!success) {
-                    std::cout << "Skipping this run due to raw kernel failure\n";
-                    continue;
-                }
+                // if (!success) {
+                //     std::cout << "Skipping this run due to raw kernel failure\n";
+                //     continue;
+                // }
 
                 // Save results to CSV
                 save_to_csv(results_file, dim, nnz_per_row, sparsity, taco_time, raw_kernel_time);

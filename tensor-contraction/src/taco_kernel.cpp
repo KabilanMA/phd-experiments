@@ -41,12 +41,14 @@ static double __taco_kernel_1_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
     Tensor<double> A({B.getDimension(0), B.getDimension(0)}, csr);
     
     // transpose_CSR_to_CSC_denseIntermediate(C, Ct_1);
-    transpose_CSR_to_CSC_tacoInternals(C, Ct_2);
+    // transpose_CSR_to_CSC_tacoInternals(C, Ct_2);
     // Ct.pack();
     
-    A(i,j) = B(i,j) * C.transpose({1,0}, csc)(i,j);
+    // A(i,j) = B(i,j) * C.transpose({1,0}, csc)(i,j);
+    A(i,j) = B(i,j) * Ct_2(i,j);
     A.compile();   // generate code for the expression
     clock_gettime(CLOCK_MONOTONIC, &start);
+    transpose_CSR_to_CSC_tacoInternals(C, Ct_2);
     A.assemble();  // allocate indices, memory, etc.    
     A.compute();
     clock_gettime(CLOCK_MONOTONIC, &end);
