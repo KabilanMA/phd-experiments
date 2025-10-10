@@ -19,4 +19,4 @@ RUN git clone --recursive https://github.com/tensor-compiler/taco.git /workspace
 ENV LD_LIBRARY_PATH=/workspace/tools/taco/build/lib:$LD_LIBRARY_PATH
 
 # Default entrypoint: execute any given command
-ENTRYPOINT ["/bin/bash", "-c"]
+CMD ["/bin/bash"]
