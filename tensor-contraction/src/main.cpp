@@ -84,129 +84,39 @@ bool save_to_csv(const std::string& filename, Args&&... args)
 }
 
 
-// Helper: run kernel safely in a child process
-double run_kernel_safe(std::function<double()> kernel_func,
-                       int timeout_seconds,
-                       size_t max_memory_bytes,
-                       bool& success)
-{
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        perror("pipe failed");
-        success = false;
-        return -1.0;
-    }
-
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork failed");
-        success = false;
-        return -1.0;
-    }
-
-    if (pid == 0) { // Child
-        close(pipefd[0]); // close read end
-
-        // Set memory limit
-        struct rlimit rl;
-        rl.rlim_cur = rl.rlim_max = max_memory_bytes;
-        setrlimit(RLIMIT_AS, &rl);
-
-        // Run kernel
-        double result = kernel_func();
-
-        // Send result to parent
-        write(pipefd[1], &result, sizeof(result));
-        close(pipefd[1]);
-        exit(0);
-    } else { // Parent
-        close(pipefd[1]); // close write end
-
-        int waited = 0;
-        int status;
-        while (waited < timeout_seconds) {
-            pid_t ret = waitpid(pid, &status, WNOHANG);
-            if (ret != 0) break; // child finished
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            waited++;
-        }
-
-        if (waited >= timeout_seconds) {
-            std::cerr << "Kernel timed out! Killing process " << pid << "\n";
-            kill(pid, SIGKILL);
-            success = false;
-            return -1.0;
-        }
-
-        double result = -1.0;
-        ssize_t n = read(pipefd[0], &result, sizeof(result));
-        close(pipefd[0]);
-
-        if (n != sizeof(result) || !WIFEXITED(status)) {
-            std::cerr << "Kernel failed (memory limit or crash)\n";
-            success = false;
-            return -1.0;
-        }
-
-        success = true;
-        return result;
-    }
-}
-
 /**
  * Sparsity == percentage of nnz per row
  */
 void experiment2(float sparsity_incrementor)
 {
     float sparsity = sparsity_incrementor;
-    const int timeout_seconds = 10; // max runtime per kernel
-    const size_t max_memory_bytes = 20L * 1024 * 1024 * 1024; // 20 GiB per kernel
 
     while (sparsity < 1)
     {
         // multiple runs to average out
         for (size_t run = 0; run < 1; run++)
         {
-            std::string results_file = create_results_file(("results_" + std::to_string(run) + ".csv"), "Dimension,NNZ_per_row,Sparsity,TACO_Time,Raw_Time", "experiment2");
+            std::string results_file = create_results_file(("results_raw_" + std::to_string(run) + "_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Raw_Time", "experiment2");
             // for different matrix sizes
-            for (int dim = 3; dim < 5000; dim++)
+            for (int dim = 3; dim < 10000; dim++)
             {
                 int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
                 COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
                 COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
                 Tensor<double> workspace;
 
-                // bool success = false;
-                // double taco_time = run_kernel_safe([&]() {
-                //     return taco_kernel_1_1(B, C, workspace);
-                // }, timeout_seconds, max_memory_bytes, success);
-
-                // if (!success) {
-                //     std::cout << "Skipping this run due to taco kernel failure\n";
-                //     continue;
-                // }
-
-                // double raw_kernel_time = run_kernel_safe([&]() {
-                //     return raw_kernel_1_1(B, C);
-                // }, timeout_seconds, max_memory_bytes, success);
                 double raw_kernel_time = raw_kernel_1_1(B, C);
-                double taco_time = taco_kernel_1_1(B, C, workspace);
+                // double taco_time = taco_kernel_1_1(B, C, workspace);
 
-
+                workspace = Tensor<double>();
                 freeCOOMatrix(&B);
                 freeCOOMatrix(&C);
-                
-                // if (!success) {
-                //     std::cout << "Skipping this run due to raw kernel failure\n";
-                //     continue;
-                // }
 
                 // Save results to CSV
-                save_to_csv(results_file, dim, nnz_per_row, sparsity, taco_time, raw_kernel_time);
+                // save_to_csv(results_file, dim, nnz_per_row, sparsity, taco_time, raw_kernel_time);
                 
                 std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
-                         << ", Sparsity: " << sparsity 
-                         << ", TACO: " << taco_time 
+                        //  << ", TACO: " << taco_time 
                          << ", Raw: " << raw_kernel_time << std::endl;
                 std::cout << "=================================================" << std::endl;
             }
@@ -217,7 +127,7 @@ void experiment2(float sparsity_incrementor)
 
 int main(int argc, char *argv[])
 {
-    experiment2(0.05);
+    experiment2(0.20);
     // create_results_file("results.txt", "Dimension,NNZ_per_row,Sparsity,TACO_Time,Raw_Time", "experiment2");
     // COOMatrix B = generate_synthetic_matrix(3, 3, 2);
     // COOMatrix C = generate_synthetic_matrix(3, 3, 2);

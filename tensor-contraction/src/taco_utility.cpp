@@ -22,16 +22,16 @@ void transpose_CSR_to_CSC_denseIntermediate(Tensor<double> &A, Tensor<double> &A
 
 // A is in CSR and At is in CSC format
 void transpose_CSR_to_CSC_tacoInternals(Tensor<double> &A, Tensor<double> &At) {
-    Tensor<double> A_coo({A.getDimension(0), A.getDimension(1)}, {Dense, Dense});
-    IndexVar i, j;
+    // Tensor<double> A_coo({A.getDimension(0), A.getDimension(1)}, {Dense, Dense});
+    // IndexVar i, j;
 
-    A_coo(i,j) = A(i,j);
-    // A_coo.evaluate();
-    A_coo.compile();
-    A_coo.assemble();
-    A_coo.compute();
+    // A_coo(i,j) = A(i,j);
+    // // A_coo.evaluate();
+    // A_coo.compile();
+    // A_coo.assemble();
+    // A_coo.compute();
 
-    At = A_coo.transpose({1,0}, {Sparse, Dense});
+    At = A.transpose({1,0}, {Sparse, Dense});
 }
 
 void generate_taco_tensor_from_coo(const COOMatrix &coo, Tensor<double> &tensor)
@@ -39,5 +39,6 @@ void generate_taco_tensor_from_coo(const COOMatrix &coo, Tensor<double> &tensor)
     for (int idx = 0; idx < coo.values.size(); idx++) {
         tensor.insert({coo.row_indices[idx], coo.col_indices[idx]}, coo.values[idx]);
     }
+    // taco::COO(2, true, true, false, {});
     return;
 }

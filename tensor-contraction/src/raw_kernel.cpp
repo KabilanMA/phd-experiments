@@ -61,6 +61,7 @@ double raw_kernel_1_1(const COOMatrix &B, const COOMatrix &C)
     freeCSRMatrix(&csrB);
     freeCSRMatrix(&csrC);
     freeCSRMatrix(result);
+    free(result);
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     return elapsed;
 }

@@ -25,7 +25,9 @@ double taco_kernel_1_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &w
     B_taco.pack();
     C_taco.pack();
     double elapsed = __taco_kernel_1_1(B_taco, C_taco, workspace);
-
+    
+    B_taco = Tensor<double>();
+    C_taco = Tensor<double>();
     return elapsed;
 }
 
@@ -48,14 +50,16 @@ static double __taco_kernel_1_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
     A(i,j) = B(i,j) * Ct_2(i,j);
     A.compile();   // generate code for the expression
     clock_gettime(CLOCK_MONOTONIC, &start);
-    transpose_CSR_to_CSC_tacoInternals(C, Ct_2);
+    Ct_2 = C.transpose({1,0}, csc);
+    // transpose_CSR_to_CSC_tacoInternals(C, Ct_2);
     A.assemble();  // allocate indices, memory, etc.    
     A.compute();
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
     workspace = A;
-
+    Ct_2 = Tensor<double>();
+    A = Tensor<double>();
     return elapsed;
 }
 
