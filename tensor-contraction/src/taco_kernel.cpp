@@ -7,6 +7,57 @@ struct timespec start, end;
 // Transpose C to CSC and transpose the tensor via "dense intermediate"
 static double __taco_kernel_1_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &workspace);
 
+// A(i,j) = B(i,k) * C(k,j)
+// All are in CSR format initially
+// Normal Matrix Multiplication
+static double __taco_kernel_2_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &workspace);
+
+double taco_kernel_2_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &workspace) 
+{
+    Format csr({Dense, Sparse});
+    Format csc({Sparse, Dense});
+    Format dense_f({Dense, Dense});
+    IndexVar i, j;
+
+    Tensor<double> B_taco({B.rows, B.cols}, csr);
+    generate_taco_tensor_from_coo(B, B_taco);
+    // B_taco.pack();
+
+    Tensor<double> C_taco({C.rows, C.cols}, csr);
+    generate_taco_tensor_from_coo(C, C_taco);
+    // C_taco.pack();
+    Tensor<double> Ct({C.cols, C.rows}, csc);
+    B_taco.pack();
+    C_taco.pack();
+    double elapsed = __taco_kernel_2_1(B_taco, C_taco, workspace);
+
+    // std::cout << workspace << std::endl;
+    
+    B_taco = Tensor<double>();
+    C_taco = Tensor<double>();
+    return elapsed;
+}
+
+static double __taco_kernel_2_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &workspace)
+{
+    Format csr({Dense, Sparse});
+    Format csc({Sparse, Dense});
+    Format dense_f({Dense, Dense});
+    IndexVar i, j, k;
+
+    Tensor<double> A({B.getDimension(0), C.getDimension(1)}, csr);
+
+    A(i,j) = B(i,k) * C(k,j);
+    A.compile();
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    A.assemble();
+    A.compute();
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    // workspace = A;
+    return elapsed;
+}
+
 double taco_kernel_1_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &workspace) 
 {
     Format csr({Dense, Sparse});

@@ -169,6 +169,39 @@ void experiment3(float sparsity_starter)
     }
 }
 
+void experiment4(float sparsity_starter)
+{
+    float sparsity = sparsity_starter;
+
+    while (sparsity < 1)
+    {
+        std::string results_file = create_results_file(("results_taco_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Time", "experiment4");
+        for (int dim = 3; dim < 1001; dim++)
+        {
+            int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
+            COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            Tensor<double> workspace;
+
+            double taco_time = taco_kernel_2_1(B, C, workspace);
+
+            workspace = Tensor<double>();
+            freeCOOMatrix(&B);
+            freeCOOMatrix(&C);
+
+            // Save results to CSV
+            save_to_csv(results_file, dim, nnz_per_row, sparsity, taco_time);
+
+            std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
+                    << ", Sparsity: " << sparsity
+                    << ", TACO: " << taco_time  << std::endl;
+                std::cout << "=================================================" << std::endl;
+        }
+
+        sparsity += 0.05;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 3) {
@@ -182,14 +215,13 @@ int main(int argc, char *argv[])
     {
     case 0:
         /* Call the TACO experiment3 - TACO Kernel*/
-        experiment3(sparsity_starter);
+        experiment4(sparsity_starter);
         break;
     default:
         /* Call the experiment2 - Raw Kernel */
-        experiment2(sparsity_starter);
+        experiment4(sparsity_starter);
         break;
     }
-    experiment2(0.05);
     // create_results_file("results.txt", "Dimension,NNZ_per_row,Sparsity,TACO_Time,Raw_Time", "experiment2");
     // COOMatrix B = generate_synthetic_matrix(3, 3, 2);
     // COOMatrix C = generate_synthetic_matrix(3, 3, 2);
