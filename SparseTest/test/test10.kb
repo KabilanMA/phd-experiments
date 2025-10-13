@@ -1,0 +1,2 @@
+let T[i,j] = sum(k) A[i,k] * B[k,j]
+in  C[i,j] = T[i,j] + D[i,j]

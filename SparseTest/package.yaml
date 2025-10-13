@@ -1,0 +1,37 @@
+name: SparseTest
+version: 0.1.0.0
+author: Kabilan Mahathevan
+license: BSD3
+build-type: Simple
+
+extra-source-files:
+  - README.md
+
+library:
+  source-dirs: src
+  exposed-modules:
+    - DSL.AST
+    - DSL.Parser
+  dependencies:
+  - base >=4.18 && <5
+  - containers >=0.6 && <0.7
+  - text >=2.0 && <2.1
+  - megaparsec >=9.6 && <10
+  - mtl >=2.3 && <2.4
+  - transformers >=0.6 && <0.7
+  - prettyprinter >=1.7 && <1.8
+  - directory >=1.3 && < 1.4
+  - process >=1.6 && <1.8
+  default-extensions:
+  - OverloadedStrings
+
+executables:
+  SparseTest-exe:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+      - -Wall
+      - -O2
+    dependencies:
+      - SparseTest
+      - base

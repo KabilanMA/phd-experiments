@@ -1,0 +1,30 @@
+-- cabal.project for SparseTest
+-- Ensures reproducible builds with pinned index-state and compiler
+
+packages: 
+  .
+
+-- Pin Hackage to a fixed snapshot for reproducible builds
+index-state: 2025-10-12T13:56:45Z
+
+-- Pin compiler version
+with-compiler: ghc-9.6.7
+
+-- Constraints for reproducibility; match the versions in your package.yaml
+constraints:
+  base >=4.18 && <5,
+  containers >=0.6 && <0.7,
+  text >=2.0 && <2.1,
+  megaparsec >=9.6 && <10,
+  mtl >=2.3 && <2.4,
+  transformers >=0.6 && <0.7,
+  prettyprinter >=1.7 && <1.8,
+  directory >=1.3 && <1.4,
+  process >=1.6 && <1.8,
+  filepath >=1.4 && <1.5
+
+-- Optional: enable verbose builds for debugging dependency issues
+-- build-report: True
+
+-- Optional: force new-style builds
+-- style: v2
