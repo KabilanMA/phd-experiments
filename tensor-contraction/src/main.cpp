@@ -147,7 +147,7 @@ void experiment3(float sparsity_starter)
                 COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
                 Tensor<double> workspace;
 
-                // double raw_kernel_time = raw_kernel_1_1(B, C);
+                double raw_kernel_time = raw_kernel_1_1(B, C);
                 double taco_time = taco_kernel_1_1(B, C, workspace);
 
                 workspace = Tensor<double>();
@@ -175,26 +175,29 @@ void experiment4(float sparsity_starter)
 
     while (sparsity < 1)
     {
-        std::string results_file = create_results_file(("results_taco_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Time", "experiment4");
+        std::string results_file = create_results_file(("results_raw_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Raw_Time", "experiment4");
         for (int dim = 3; dim < 1001; dim++)
         {
             int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
             COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            // COOMatrix B = generate_matrix_from_data(3,3, {0,1,1,2,0}, {2,0,2,1,0}, {1,5,2,3,2});
             COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            // COOMatrix C = generate_matrix_from_data(3,3, {0,0,1,1,2}, {0,2,0,1,1}, {3,2,1,1,2});
             Tensor<double> workspace;
 
-            double taco_time = taco_kernel_2_1(B, C, workspace);
-
+            double raw_kernel_time = raw_kernel_2_1(B, C);
+            // double taco_time = taco_kernel_2_1(B, C, workspace);
             workspace = Tensor<double>();
             freeCOOMatrix(&B);
             freeCOOMatrix(&C);
 
             // Save results to CSV
-            save_to_csv(results_file, dim, nnz_per_row, sparsity, taco_time);
+            // save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time);
 
             std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
                     << ", Sparsity: " << sparsity
-                    << ", TACO: " << taco_time  << std::endl;
+                    // << ", TACO: " << taco_time  << std::endl;
+                    << ", Unzipper Time: " << raw_kernel_time  << std::endl;
                 std::cout << "=================================================" << std::endl;
         }
 

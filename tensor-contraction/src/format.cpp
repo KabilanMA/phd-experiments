@@ -168,8 +168,7 @@ CSRMatrix generate_random_CSR(int rows, int cols, int nnz_per_row)
     return M;
 }
 
-void COO_to_CSR(const COOMatrix &coo, CSRMatrix &csr)
-{
+void COO_to_CSR(const COOMatrix &coo, CSRMatrix &csr) {
     csr.rows = coo.rows;
     csr.cols = coo.cols;
     csr.nnz = coo.values.size();
@@ -178,23 +177,33 @@ void COO_to_CSR(const COOMatrix &coo, CSRMatrix &csr)
     csr.col_ind = (int *)malloc(csr.nnz * sizeof(int));
     csr.val = (double *)malloc(csr.nnz * sizeof(double));
 
-    // Count the number of non-zeros in each row
+    // Create a vector of indices for sorting
+    std::vector<int> perm(coo.values.size());
+    for (int i = 0; i < coo.values.size(); i++) perm[i] = i;
+
+    std::sort(perm.begin(), perm.end(), [&](int a, int b) {
+        if (coo.row_indices[a] != coo.row_indices[b])
+            return coo.row_indices[a] < coo.row_indices[b];
+        return coo.col_indices[a] < coo.col_indices[b];
+    });
+
+    // Count non-zeros per row
     for (int i = 0; i < csr.nnz; i++) {
-        csr.row_ptr[coo.row_indices[i] + 1]++;
+        csr.row_ptr[coo.row_indices[perm[i]] + 1]++;
     }
 
-    // Compute the prefix sum to get row_ptr
-    for (int i = 0; i < csr.rows; i++) {
+    // Prefix sum for row_ptr
+    for (int i = 0; i < csr.rows; i++)
         csr.row_ptr[i + 1] += csr.row_ptr[i];
-    }
 
-    // Fill col_ind and val arrays
+    // Fill col_ind and val using the permutation
     std::vector<int> counter(csr.rows, 0);
     for (int i = 0; i < csr.nnz; i++) {
-        int row = coo.row_indices[i];
+        int idx = perm[i];
+        int row = coo.row_indices[idx];
         int dest = csr.row_ptr[row] + counter[row];
-        csr.col_ind[dest] = coo.col_indices[i];
-        csr.val[dest] = coo.values[i];
+        csr.col_ind[dest] = coo.col_indices[idx];
+        csr.val[dest] = coo.values[idx];
         counter[row]++;
     }
 }
