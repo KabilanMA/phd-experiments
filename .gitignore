@@ -11,3 +11,5 @@ dist/
 
 #VS Code
 .vscode
+
+**/pyenv
