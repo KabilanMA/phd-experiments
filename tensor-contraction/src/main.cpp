@@ -87,7 +87,7 @@ bool save_to_csv(const std::string& filename, Args&&... args)
 /**
  * Sparsity == percentage of nnz per row
  */
-void experiment2(float sparsity_starter)
+void experiment_1(float sparsity_starter)
 {
     float sparsity = sparsity_starter;
 
@@ -96,51 +96,9 @@ void experiment2(float sparsity_starter)
         // multiple runs to average out
         for (size_t run = 0; run < 1; run++)
         {
-            std::string results_file = create_results_file(("results_raw_" + std::to_string(run) + "_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Raw_Time", "experiment2");
+            std::string results_file = create_results_file(("results_" + std::to_string(run) + "_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Unzipper_Time,TACO_Time", "kernel1");
             // for different matrix sizes
-            for (int dim = 3; dim < 2000; dim++)
-            {
-                int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
-                COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
-                COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
-                Tensor<double> workspace;
-
-                double raw_kernel_time = raw_kernel_1_1(B, C);
-                // double taco_time = taco_kernel_1_1(B, C, workspace);
-
-                workspace = Tensor<double>();
-                freeCOOMatrix(&B);
-                freeCOOMatrix(&C);
-
-                // Save results to CSV
-                save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time);
-                
-                std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
-                        << ", Sparsity: " << sparsity
-                        //  << ", TACO: " << taco_time 
-                         << ", Raw Time: " << raw_kernel_time << std::endl;
-                std::cout << "=================================================" << std::endl;
-            }
-        }
-        sparsity += 0.05;
-    }
-}
-
-/**
- * Sparsity == percentage of nnz per row
- */
-void experiment3(float sparsity_starter)
-{
-    float sparsity = sparsity_starter;
-
-    while (sparsity < 1)
-    {
-        // multiple runs to average out
-        for (size_t run = 0; run < 1; run++)
-        {
-            std::string results_file = create_results_file(("results_taco_" + std::to_string(run) + "_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,TACO_Time", "experiment3");
-            // for different matrix sizes
-            for (int dim = 3; dim < 1000; dim++)
+            for (int dim = 3; dim < 1001; dim++)
             {
                 int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
                 COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
@@ -155,27 +113,26 @@ void experiment3(float sparsity_starter)
                 freeCOOMatrix(&C);
 
                 // Save results to CSV
-                save_to_csv(results_file, dim, nnz_per_row, sparsity, taco_time);
+                save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time, taco_time);
                 
                 std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
                         << ", Sparsity: " << sparsity
-                         << ", TACO: " << taco_time  << std::endl;
-                        //  << ", Raw Time: " << raw_kernel_time << std::endl;
+                         << ", TACO time: " << taco_time 
+                         << ", Unziper Time: " << raw_kernel_time << std::endl;
                 std::cout << "=================================================" << std::endl;
             }
         }
-        std::cout << "====================Completed " << sparsity << "====================" << std::endl;
         sparsity += 0.05;
     }
 }
 
-void experiment4(float sparsity_starter)
+void experiment_2(float sparsity_starter)
 {
     float sparsity = sparsity_starter;
 
     while (sparsity < 1)
     {
-        std::string results_file = create_results_file(("results_raw_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Raw_Time", "experiment4");
+        std::string results_file = create_results_file(("results_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Unzipper_Time,TACO_Time", "kernel2");
         for (int dim = 3; dim < 1001; dim++)
         {
             int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
@@ -186,22 +143,144 @@ void experiment4(float sparsity_starter)
             Tensor<double> workspace;
 
             double raw_kernel_time = raw_kernel_2_1(B, C);
-            // double taco_time = taco_kernel_2_1(B, C, workspace);
+            double taco_time = taco_kernel_2_1(B, C, workspace);
             workspace = Tensor<double>();
             freeCOOMatrix(&B);
             freeCOOMatrix(&C);
 
             // Save results to CSV
-            // save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time);
+            save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time, taco_time);
 
             std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
                     << ", Sparsity: " << sparsity
-                    // << ", TACO: " << taco_time  << std::endl;
+                    << ", TACO: " << taco_time
                     << ", Unzipper Time: " << raw_kernel_time  << std::endl;
                 std::cout << "=================================================" << std::endl;
+                // break;
         }
 
         sparsity += 0.05;
+        break;
+    }
+}
+
+void experiment_3(float sparsity_starter)
+{
+    float sparsity = sparsity_starter;
+
+    while (sparsity < 1)
+    {
+        std::string results_file = create_results_file(("results_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Unzipper_Time,TACO_Time", "kernel3");
+        for (int dim = 3; dim < 1001; dim++)
+        {
+            int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
+            COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            COOMatrix D = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            // COOMatrix B = generate_matrix_from_data(3,3, {0,0,1,2}, {1,2,0,1} ,{1.0,2.0,3.0,8.0});
+            // COOMatrix C = generate_matrix_from_data(3,3, {0,1,1,2}, {2,0,2,1} ,{1.0,2.0,3.0,1.0});
+            // COOMatrix D = generate_matrix_from_data(3,3, {0,0,1,2}, {0,1,0,2} ,{1.0,4.0,2.0,1.0});
+            Tensor<double> workspace;
+
+            double raw_kernel_time = raw_kernel_3_1(B, C, D);
+            double taco_time = taco_kernel_3_1(B, C, D, workspace);
+            workspace = Tensor<double>();
+
+            freeCOOMatrix(&B);
+            freeCOOMatrix(&C);
+            freeCOOMatrix(&D);
+
+            // Save results to CSV
+            save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time, taco_time);
+
+            std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
+                    << ", Sparsity: " << sparsity
+                    << ", TACO Time: " << taco_time
+                    << ", Unzipper Time: " << raw_kernel_time  << std::endl;
+                std::cout << "=================================================" << std::endl;
+                // break;
+        }
+
+        sparsity += 0.05;
+        // break;
+    }
+}
+
+void experiment_4(float sparsity_starter)
+{
+    float sparsity = sparsity_starter;
+
+    while (sparsity < 1)
+    {
+        std::string results_file = create_results_file(("results_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Unzipper_Time,TACO_Time", "kernel4");
+        for (int dim = 3; dim < 1001; dim++)
+        {
+            int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
+            COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            // COOMatrix B = generate_matrix_from_data(3,3, {0,0,1,2}, {1,2,0,1} ,{1.0,2.0,3.0,8.0});
+            // COOMatrix C = generate_matrix_from_data(3,3, {0,1,1,2}, {2,0,2,1} ,{1.0,2.0,3.0,1.0});
+            Tensor<double> workspace;
+
+            double raw_kernel_time = raw_kernel_4_1(B, C);
+            double taco_time = taco_kernel_4_1(B, C, workspace);
+            workspace = Tensor<double>();
+
+            freeCOOMatrix(&B);
+            freeCOOMatrix(&C);
+
+            // Save results to CSV
+            save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time, taco_time);
+
+            std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
+                    << ", Sparsity: " << sparsity
+                    << ", TACO Time: " << taco_time
+                    << ", Unzipper Time: " << raw_kernel_time  << std::endl;
+                std::cout << "=================================================" << std::endl;
+                // break;
+        }
+
+        sparsity += 0.05;
+        // break;
+    }
+}
+
+void experiment_5(float sparsity_starter)
+{
+    float sparsity = sparsity_starter;
+
+    while (sparsity < 1)
+    {
+        std::string results_file = create_results_file(("results_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Unzipper_Time,TACO_Time", "kernel5");
+        for (int dim = 3; dim < 1001; dim++)
+        {
+            int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
+            COOMatrix B = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            COOMatrix C = generate_synthetic_matrix(dim, dim, nnz_per_row);
+            // COOMatrix B = generate_matrix_from_data(3,3, {0,0,1,2}, {1,2,0,1} ,{1.0,2.0,3.0,8.0});
+            // COOMatrix C = generate_matrix_from_data(3,3, {0,1,1,2}, {2,0,2,1} ,{1.0,2.0,3.0,1.0});
+            Tensor<double> workspace;
+
+            double raw_kernel_time = raw_kernel_5_1(B, C);
+            // double taco_time = taco_kernel_5_1(B, C, workspace);
+            workspace = Tensor<double>();
+
+            freeCOOMatrix(&B);
+            freeCOOMatrix(&C);
+
+            // Save results to CSV
+            save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time);
+
+            std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
+                    << ", Sparsity: " << sparsity
+                    // << ", TACO Time: " << taco_time
+                    << ", Unzipper Time: " << raw_kernel_time  << std::endl;
+                std::cout << "=================================================" << std::endl;
+                // break;
+        }
+
+        sparsity += 0.05;
+        // break;
     }
 }
 
@@ -216,13 +295,23 @@ int main(int argc, char *argv[])
     int experiment_type = std::stoi(argv[2]);
     switch (experiment_type)
     {
-    case 0:
+    case 1:
+        experiment_1(sparsity_starter);
+        break;
+    case 2:
         /* Call the TACO experiment3 - TACO Kernel*/
-        experiment4(sparsity_starter);
+        experiment_2(sparsity_starter);
+        break;
+    case 3:
+        experiment_3(sparsity_starter);
+        break;
+    case 4:
+        experiment_4(sparsity_starter);
+        break;
+    case 5:
+        experiment_5(sparsity_starter);
         break;
     default:
-        /* Call the experiment2 - Raw Kernel */
-        experiment4(sparsity_starter);
         break;
     }
     // create_results_file("results.txt", "Dimension,NNZ_per_row,Sparsity,TACO_Time,Raw_Time", "experiment2");
