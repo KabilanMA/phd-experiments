@@ -164,6 +164,116 @@ static CSRMatrix* _raw_kernel_2_1(const CSRMatrix *B, const CSRMatrix *C) {
     return A;
 }
 
+// Struct for per-row accumulation
+typedef struct {
+    int col;             // column index
+    double value;        // accumulated value
+    UT_hash_handle hh;   // makes this structure hashable
+} HashEntry;
+int cmp_entry_ptr(const void *a, const void *b) {
+    HashEntry *ea = *(HashEntry **)a;
+    HashEntry *eb = *(HashEntry **)b;
+    return ea->col - eb->col;
+}
+
+static CSRMatrix* _raw_kernel_2_uthash(const CSRMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d) * C(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int capacity = B->nnz * 4;
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = 0;
+
+    // iterate over the rows of B
+    for (int i = 0; i < n; i++) {
+        HashEntry *accum = NULL;  // uthash table for row i
+
+        // iterate over non-zeros of i-th row of B
+        for (int p = B->row_ptr[i]; p < B->row_ptr[i + 1]; p++) {
+            int k = B->col_ind[p];
+            double bval = B->val[p];
+
+            // multiply with row k of C
+            for (int q = C->row_ptr[k]; q < C->row_ptr[k + 1]; q++) {
+                int j = C->col_ind[q];
+                double cval = C->val[q];
+                double product = bval * cval;
+
+                HashEntry *entry;
+                HASH_FIND_INT(accum, &j, entry);
+                if (entry == NULL) {
+                    // create new entry
+                    entry = (HashEntry *)malloc(sizeof(HashEntry));
+                    entry->col = j;
+                    entry->value = product;
+                    HASH_ADD_INT(accum, col, entry);
+                } else {
+                    entry->value += product;
+                }
+            }
+        }
+
+        // uthash iteration is unordered → sort once at output time
+        int row_nnz = HASH_COUNT(accum);
+        if (row_nnz > 0) {
+            HashEntry **entries = (HashEntry **)malloc(row_nnz * sizeof(HashEntry *));
+            HashEntry *entry;
+            int idx = 0;
+            for (entry = accum; entry != NULL; entry = (HashEntry*)entry->hh.next) {
+                entries[idx++] = entry;
+            }
+
+            // sort by column index
+            qsort(entries, row_nnz, sizeof(HashEntry *), cmp_entry_ptr);
+
+            // output sorted row
+            for (int a = 0; a < row_nnz; a++) {
+                HashEntry *e = entries[a];
+                if (nnz >= capacity) {
+                    capacity *= 2;
+                    col_ind = (int *)realloc(col_ind, capacity * sizeof(int));
+                    val = (double *)realloc(val, capacity * sizeof(double));
+                }
+                col_ind[nnz] = e->col;
+                val[nnz] = e->value;
+                nnz++;
+            }
+
+            free(entries);
+        }
+
+        // free hash entries for this row
+        HashEntry *tmp;
+        HashEntry *entry;
+        HASH_ITER(hh, accum, entry, tmp) {
+            HASH_DEL(accum, entry);
+            free(entry);
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+
+    return A;
+}
+
 // A(i, j) = B(i, k)  * C(k, j) * D(k, j)
 static CSRMatrix* _raw_kernel_3_1(const CSRMatrix *B, const CSRMatrix *C, const CSRMatrix *D) {
     if (B->cols != C->rows || C->rows != D->rows || C->cols != D->cols) {
@@ -491,8 +601,36 @@ double raw_kernel_2_1(const COOMatrix &B, const COOMatrix &C)
     COO_to_CSR(C, csrC);
     clock_gettime(CLOCK_MONOTONIC, &start);
     CSRMatrix* result = _raw_kernel_2_1(&csrB, &csrC);
+    // CSRMatrix* result = _raw_kernel_2_uthash(&csrB, &csrC);
     clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "=======================================" << std::endl;
     // result->print();
+    // std::cout << "=======================================" << std::endl;
+    // result2->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_2(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    // CSRMatrix* result = _raw_kernel_2_1(&csrB, &csrC);
+    CSRMatrix* result = _raw_kernel_2_uthash(&csrB, &csrC);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "=======================================" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    // result2->print();
+    // std::cout << "=======================================" << std::endl;
     freeCSRMatrix(&csrB);
     freeCSRMatrix(&csrC);
     freeCSRMatrix(result);

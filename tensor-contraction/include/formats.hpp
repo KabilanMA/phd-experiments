@@ -1,6 +1,7 @@
 #ifndef FORMATS_HPP
 #define FORMATS_HPP
 
+#include "uthash.h"
 #include <vector>
 #include <stdio.h>
 #include <stdlib.h>

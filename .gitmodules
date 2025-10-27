@@ -1,3 +1,6 @@
 [submodule "tools/taco"]
 	path = tools/taco
 	url = https://github.com/tensor-compiler/taco.git
+[submodule "tools/sparsetir"]
+	path = tools/sparsetir
+	url = https://github.com/uwsampl/SparseTIR.git
