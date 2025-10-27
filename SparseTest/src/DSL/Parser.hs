@@ -1,19 +1,34 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveGeneric #-}
 
-module DSL.Parser (parseEinsum, parseExpr, parseIndex, parseFile) where
+module DSL.Parser
+  ( parseTensorDecls
+  , TensorDecl(..)
+  , DType(..)
+  , LevelFormat(..)
+  , Dim(..)
+  , TensorFormat
+  ) where
 
-import DSL.AST
-import Control.Monad (void)
-import Data.Void (Void)
+import Prelude hiding (takeWhile)
+import Data.Void
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
+import DSL.AST
 
+-- Parser type
 type Parser = Parsec Void String
 
--- | Lexer
+-- -------------------------
+-- Lexer helpers
+-- -------------------------
 sc :: Parser ()
-sc = L.space space1 (L.skipLineComment "#") empty
+sc = L.space space1 lineComment blockComment
+  where
+    lineComment  = L.skipLineComment "//"
+    blockComment = L.skipBlockComment "/*" "*/"
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
@@ -21,86 +36,53 @@ lexeme = L.lexeme sc
 symbol :: String -> Parser String
 symbol = L.symbol sc
 
--- | Parse an identifier (e.g., tensor name)
-identifier :: Parser String
-identifier = lexeme ((:) <$> letterChar <*> many alphaNumChar)
+brackets :: Parser a -> Parser a
+brackets = between (symbol "[") (symbol "]")
 
--- | Parse an index (single character)
-parseIndex :: Parser Index
-parseIndex = Ix <$> lowerChar
+commaSep1 :: Parser a -> Parser [a]
+commaSep1 p = p `sepBy1` symbol ","
 
--- | Parse list of indices like [i,j,k]
-parseIndexList :: Parser [Index]
-parseIndexList = between (symbol "[") (symbol "]") (parseIndex `sepBy1` symbol ",")
+ident :: Parser String
+ident = lexeme ((:) <$> letterChar <*> many (alphaNumChar <|> char '_'))
 
--- | Parse constants, variables, and parenthesized exprs
-parseAtom :: Parser Expr
-parseAtom =
-      try parseVar
-  <|> try parseConst
-  <|> between (symbol "(") (symbol ")") parseExpr
+-- -------------------------
+-- Primitive parsers
+-- -------------------------
+pDType :: Parser DType
+pDType = lexeme $ choice
+  [ TInt   <$ (string' "int"   <* notFollowedBy alphaNumChar)
+  , TFloat <$ (string' "float" <* notFollowedBy alphaNumChar)
+  , TDouble<$ (string' "double"<* notFollowedBy alphaNumChar)
+  ]
 
-parseConst :: Parser Expr
-parseConst = EConstDouble <$> lexeme L.float
+pLevelFormat :: Parser LevelFormat
+pLevelFormat = lexeme $ choice
+  [ Dense  <$ string "Dense"
+  , Sparse <$ string "Sparse"
+  ]
 
-parseVar :: Parser Expr
-parseVar = do
-  name <- identifier
-  idxs <- optional parseIndexList
-  return $ EVar name (maybe [] id idxs)
+pDim :: Parser Dim
+pDim = Dim <$> lexeme L.decimal
 
--- | Parse unary expressions like -A[i]
-parseUnary :: Parser Expr
-parseUnary =
-      (EUnary UNegate <$> (symbol "-" *> parseUnary))
-  <|> parseAtom
-
--- | Parse binary operations with precedence
-parseMulDiv :: Parser Expr
-parseMulDiv = makeBinOps parseUnary [("*", BMul), ("/", BDiv)]
-
-parseAddSub :: Parser Expr
-parseAddSub = makeBinOps parseMulDiv [("+", BAdd), ("-", BSub)]
-
-parseExpr :: Parser Expr
-parseExpr = parseAddSub
-
--- | Generic binary operator helper
-makeBinOps :: Parser Expr -> [(String, BinaryOp)] -> Parser Expr
-makeBinOps lower ops = foldl makeParser lower ops
-  where
-    makeParser p (sym, bop) =
-      do
-        let op = symbol sym >> return (EBinary bop)
-        chainl1 p op
-
--- | Chain left helper (Megaparsec doesn't export one)
-chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
-chainl1 p op = do
-  x <- p
-  rest x
-  where
-    rest x = (do
-      f <- op
-      y <- p
-      rest (f x y)) <|> return x
-
--- | Parse einsum statement like: C[i] = A[i,j] * B[j,i]
-parseEinsum :: Parser EinsumStmt
-parseEinsum = do
-  out <- identifier
-  idxs <- parseIndexList
-  void $ symbol "="
-  e <- parseExpr
-  return $ EinsumStmt
-    { outName = out
-    , outIdxs = idxs
-    , inputs = []          -- we’ll fill this in later if you want decl parsing
-    , expr = e
-    , annots = []
+-- -------------------------
+-- Tensor Declaration
+-- -------------------------
+-- Example:
+-- tensor A [3,3] [Dense,Sparse] float
+pTensorDecl :: Parser TensorDecl
+pTensorDecl = do
+  _ <- symbol "tensor"
+  name <- ident
+  shape <- brackets (pDim `sepBy` symbol ",")
+  fmt <- brackets (pLevelFormat `sepBy` symbol ",")
+  dtype <- pDType
+  return TensorDecl
+    { tName   = name
+    , tShape  = shape
+    , tFormat = fmt
+    , tDType  = dtype
     }
 
--- | Parse a full file with multiple einsum statements
-parseFile :: Parser [EinsumStmt]
-parseFile = many (parseEinsum <* optional eol)
-
+-- Parse multiple tensor declarations
+parseTensorDecls :: String -> Either (ParseErrorBundle String Void) [TensorDecl]
+parseTensorDecls input = parse (sc *> many (pTensorDecl <* sc) <* eof) "<input>" input

@@ -1,1 +1,2 @@
-C[i,j] = A[i,j] + B[i,j]
+tensor A [3,3] [Dense,Sparse] float
+tensor B [2,3,4] [Dense,Dense,Dense] double

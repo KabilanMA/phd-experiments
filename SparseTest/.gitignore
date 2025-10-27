@@ -1,2 +1,32 @@
 **/dist-newstyle
 **/temp
+
+# Stack build artifacts
+.stack-work/
+
+# Generated cabal file from package.yaml
+*.cabal
+
+# Executables built by Stack
+dist/
+
+# GHCi session history
+.ghci_history
+
+# MacOS system files
+.DS_Store
+
+# Windows system files
+Thumbs.db
+
+# Editor-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Haskell-IDE specific
+.hie/
+.hie-bios/
+.hie-bios-cache/
+.hie-compat/

@@ -2,185 +2,127 @@
 
 module DSL.AST
 (
-  Index(..)
-, IndexName
-, Dim(..)
-, Shape
-, DType(..)
-, TensorFormat(..)
-, TensorDecl(..)
-, Expr(..)
-, UnaryOp(..)
-, BinaryOp(..)
-, EinsumStmt(..)
-, Schedule(..)
-, StorageAnnotation(..)
-, AccessPattern(..)
-, IterationConstraint(..)
--- * Utilities
-, mkIndex
-, mkIdxs
-, freeIndices
-, allIndices
-, validateExpr
+    Index(..),
+    Dim(..),
+    Shape,
+    DType(..),
+    LevelFormat(..),
+    TensorFormat,
+    BinaryOp(..),
+    AccessPattern(..),
+    TensorDecl(..),
+    TensorStorage(..),
+    Tensor(..),
+    AxisIter(..),
+    Expr(..),
+    Stmt(..),
+    EinsumOp(..)
 ) where
 
-import Data.List (nub, (\\))
-import qualified Data.Set as Set
-import Data.Set (Set)
 import GHC.Generics (Generic)
 
+-- =========================================
+-- Basic Types
+-- =========================================
+
 -- | A (single) index name for einsum (e.g., 'i', 'j', 'k')
-newtype Index = Ix { unIx :: Char }
+newtype Index = Index { unIx :: Char }
     deriving (Eq, Ord, Show, Generic)
 
-type IndexName = Char
-
--- | A single dimension. We keep it as an Int for simplicity but it may
--- later become symbolic (Var/Expr) for parametric sizes.
+-- | An integer value to indicate the dimension of each tensor axis
 newtype Dim = Dim { unDim:: Int }
     deriving (Eq, Ord, Show, Generic)
 
+-- | Shape of a tensor
 type Shape = [Dim]
 
--- | Basic data types supported for tensor values.
+-- Basic data types supported for tensor values.
 data DType = TInt | TFloat | TDouble
     deriving (Eq, Show, Generic)
 
--- | Storage formats which the tool will support. This list is intentionally
--- conservative but extensible.
-data TensorFormat
-    = FmtDense                      -- ^ Dense, contiguous layout
-    | FmtCSR                        -- ^ Compressed Sparse Row (2D)
-    | FmtCSC                        -- ^ Compressed Sparse Column (2D)
-    | FmtCOO                        -- ^ Coordinate list
-    | FmtBlocked Int                -- ^ Blocked format with block size
-    | FmtCustom String              -- ^ Backend-specific custom format
+-- | Each dimension can be Dense or Sparse
+data LevelFormat = Dense | Sparse
+    deriving (Eq, Show)
+
+type TensorFormat = [LevelFormat]
+
+-- | Binary Operations
+data BinaryOp = BAdd | BSub | BMul | BDiv
     deriving (Eq, Show, Generic)
 
--- | A declaration of a tensor variable (name, shape, format, dtype)
+-- | Access pattern: whether an expression reads or writes a tensor
+data AccessPattern = Read | Write
+    deriving (Eq, Show, Generic)
+
+
+-- =========================================
+-- Tensor Declarations & Storage
+-- =========================================
+
+-- | A declaration of a tensor variable (name, shape, tensor format, dtype)
 data TensorDecl = TensorDecl
-    { tName     :: String 
-    , tShape    :: Shape
-    , tFormat   :: TensorFormat
-    , tDType    :: DType
+    { tName         :: String
+    , tShape        :: Shape
+    , tFormat       :: TensorFormat
+    , tDType        :: DType
     } deriving (Eq, Show, Generic)
 
--- | Unary ops in our DSL. These are the building blocks for elementwise
--- or reduction operations
-data UnaryOp
-    = UNegate
-    | UAbs
-    | UExp
-    deriving (Eq, Show, Generic)
-
--- | Binary ops supported in expressions.
-data BinaryOp
-    = BAdd
-    | BSub
-    | BMul
-    | BDiv
-    deriving (Eq, Show, Generic)
-
--- | Access pattern: how an expression reads or writes tensor. Useful for
--- computing iteration graphs and scheduling.
-data AccessPattern
-    = Read Index            -- ^ read along an index
-    | Write Index           -- ^ write along an index
-    deriving (Eq, Show, Generic)
-
--- |Iteration constraints that represent relationships between indices
--- (e.g. ordering, equality / contraction semantics). This small set is
--- used for reasoning about merges and intersections when lowering.
-data IterationConstraint
-    = IndexEqual Index Index            -- ^ force two indices to be equal (contraction)
-    | IndexLe Index Index               -- ^ index ordering (i <= j)
-    deriving (Eq, Show, Generic)
-
--- | Storage annotation allows attaching hints about storage to an expression
--- or tensor: e.g., say that a particular index is stored sparsely.
-data StorageAnnotation = StorageAnnotation
-    { saIndex   :: Index
-    , saFormat  :: TensorFormat
+-- | Low-level storage information for sparse tensors
+data TensorStorage = TensorStorage
+    { tsValues      :: String       -- name of data array
+    , tsPtrs        :: [String]     -- pointer arrays for sparse axes
+    , tsIndices     :: [String]     -- index ararys for sparse axes
     } deriving (Eq, Show, Generic)
 
--- | The core expression language for Einsum-like operations. This is
--- intentionally minimal but expressive enough for common tensor algebra.
+-- | A complete tensor, linking declaration to storage
+data Tensor = Tensor
+    { decl      :: TensorDecl
+    , storage   :: TensorStorage
+    } deriving (Eq, Show, Generic)
+
+-- =========================================
+-- Axis Iterators
+-- =========================================
+
+-- | Type of axis iteration (dense, compressed, hashed, etc.)
+data AxisIter
+    = DenseIter Index Dim           -- for dense axes
+    | CompressedIter Index Dim TensorStorage Int    -- compressed axis (e.g., CSR/CSC)
+    | HashedIter Index Dim TensorStorage    -- hashed axis
+    deriving (Eq, Show, Generic)
+
+-- =========================================
+-- Expressions
+-- =========================================
+
 data Expr
-    = EVar String [Index]           -- ^ Tensor variable with index order. e.g., A[i,j]
-    | EConstDouble Double           -- ^ scalar constant
-    | EUnary UnaryOp Expr           -- ^ unary elementwise op
-    | EBinary BinaryOp Expr Expr    -- ^ binary elementwise op, e.g. multiply
-    | ESum Index Expr               -- ^ reduction (sum) over an index
-    | ETranspose Expr [Index]       -- ^ change logical index ordering
-    | EReshape Expr Shape           -- ^ reshape (purely logical)
-    | ELet String Expr Expr         -- ^ local binding
-    | EMap Expr Expr                -- ^ map of function over tensor (high-order)
+    = TensorVar Tensor              -- reference to a tensor
+    | Const Double                  -- scalar constants
+    | BinOp BinaryOp Expr Expr      -- e.g., Add, Mul, Sub, Div
+    | Sum Index Expr                -- reduction / summation over an index
+    | IndexAt Tensor [Index] AccessPattern  -- indexing into tensor with read/write info
     deriving (Eq, Show, Generic)
 
--- | A top-level Einsum statement: output, list of input tensors and the
--- expression describing computation. Additional 'Schedule' may be
--- attached later.
-data EinsumStmt = EinsumStmt
-    { outName   :: String
-    , outIdxs   :: [Index]
-    , inputs    :: [TensorDecl]
-    , expr     :: Expr
-    , annots    :: [StorageAnnotation]
+-- =========================================
+-- Statements
+-- =========================================
+
+data Stmt
+    = Assign String Expr            -- e.g., C = A + B
+    | Loop AxisIter Stmt            -- loop over dense or sparse axis
+    | Seq [Stmt]                    -- sequence of statements
+    deriving (Eq, Show, Generic)
+
+-- =========================================
+-- High-level Operations
+-- =========================================
+
+-- | Representation of an einsum / tensor contraction
+data EinsumOp = EinsumOp
+    { output    :: TensorDecl       -- output tensor
+    , inputs    :: [TensorDecl]     -- input tensors
+    , indices   :: [[Index]]        -- indices per tensor
+    , reduction :: [Index]          -- reduction indices
     } deriving (Eq, Show, Generic)
 
--- | Scheduling directives / transformations for lowering. This is a
--- compact representation of common scheduling operations
-data Schedule
-    = SchReorder [Index]        -- ^ reorder loop indices
-    | SchTile Index Int         -- ^ tile an index with tile size
-    | SchParallel Index         -- ^ parallelize along index with width
-    | SchVectorize Index Int    -- ^ vectorize along index with width
-    | SchCustom String          -- ^ backend-specific schedule
-    deriving (Eq, Show, Generic)
-
--- | Smart constructors / helpers
-mkIndex :: Char -> Index
-mkIndex = Ix
-
-mkIdxs :: String -> [Index]
-mkIdxs = map Ix
-
--- | Compute the free indices appearing in an expression
-freeIndices :: Expr -> [Index]
-freeIndices e = nub (go e)
-    where
-        go (EVar _ idxs) = idxs
-        go (EConstDouble _) = []
-        go (EUnary _ x) = go x
-        go (EBinary _ x y) = go x ++ go y
-        go (ESum idx x) = filter (/= idx) (go x)
-        go (ETranspose x idxs) = nub (idxs ++ go x)
-        go (EReshape x _) = go x
-        go (ELet _ bnd body) = go bnd ++ go body
-        go (EMap f a) = go f ++ go a
-
--- | Helper to collect *all* indices including bound ones
-allIndices :: Expr -> [Index]
-allIndices e = nub (go e)
-    where
-        go (EVar _ idxs) = idxs
-        go (EConstDouble _) = []
-        go (EUnary _ x) = go x
-        go (EBinary _ x y) = go x ++ go y
-        go (ESum _ x) = go x
-        go (ETranspose x idxs) = idxs ++ go x
-        go (EReshape x _) = go x
-        go (ELet _ bnd body) = go bnd ++ go body
-        go (EMap f a) = go f ++ go a
-
--- | Basic validation: ensure that indices referenced in output appear in
--- the expression, and that tensor shapes match index usage when shapes
--- are available.
-validateExpr :: EinsumStmt -> Either String ()
-validateExpr stmt = do
-    let outIdxs' = outIdxs stmt
-        used = allIndices (expr stmt)
-    if any (`notElem` used) outIdxs'
-        then Left "Some output indices are not produced by the expression"
-        else Right ()
+-- pretty print einsum
