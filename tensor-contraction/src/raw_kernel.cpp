@@ -36,7 +36,7 @@ static CSRMatrix* _raw_kernel_1_1(const CSRMatrix *B, const CSRMatrix *C) {
                     // printf("i: %d\tj: %d\n", i, j);
                     // printf("%.2f\n", val[nnz]);
                     nnz++;
-                    // break;
+                    break;
                 }
             }
         }
@@ -50,6 +50,409 @@ static CSRMatrix* _raw_kernel_1_1(const CSRMatrix *B, const CSRMatrix *C) {
     A->nnz = nnz;
     A->row_ptr = row_ptr;
     A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+static CSRMatrix* _raw_kernel_1_2(const CSRMatrix *B, const CSCMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int capacity = B->nnz > C->nnz ? B->nnz : C->nnz;
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = nnz;
+    // iterate over the row of B
+    for (int i = 0; i < n; i++) {
+        // iterate over the non-zeros of i-th row
+        for (int p = B->row_ptr[i]; p < B->row_ptr[i+1]; p++) {
+            // column index of the non-zero in i-th row in dense matrix
+            int j = B->col_ind[p];
+
+            for (int k = C->col_ptr[i]; k < C->col_ptr[i+1]; k++)
+            {
+                if (C->row_ind[k] == j) {
+                    col_ind[nnz] = j;
+                    val[nnz] = B->val[p] * C->val[k];
+                    nnz++;
+                    break;
+                }
+            }
+        }
+        row_ptr[i+1] = nnz;
+    }
+    row_ptr[n] = nnz;
+
+    CSRMatrix* A = (CSRMatrix*)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+// A = einsum("ij,ji->ij", B, C)
+static CSRMatrix* _raw_kernel_1_3(const CSRMatrix *B, const COOMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int capacity = B->nnz > C->values.size() ? B->nnz : C->values.size();
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = nnz;
+    // iterate over the row of B
+    for (int i = 0; i < n; i++) {
+        // iterate over the non-zeros of i-th row
+        for (int p = B->row_ptr[i]; p < B->row_ptr[i+1]; p++) {
+            // column index of the non-zero in i-th row in dense matrix
+            int j = B->col_ind[p];
+
+            // search in the C matrix
+            // iterate over the non-zeros of j-th row of C
+            for (int k = 0; k < C->row_indices.size(); k++)
+            {
+                if (C->row_indices[k] == j && C->col_indices[k] == i)
+                {
+                    col_ind[nnz] = j;
+                    val[nnz] = B->val[p] * C->values[k];
+                    // printf("i: %d\tj: %d\n", i, j);
+                    // printf("%.2f\n", val[nnz]);
+                    nnz++;
+                    break;
+                }
+            }
+        }
+        row_ptr[i+1] = nnz;
+    }
+    row_ptr[n] = nnz;
+
+    CSRMatrix* A = (CSRMatrix*)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+// A = einsum("ij,ji->ij", B, C)
+static CSRMatrix* _raw_kernel_1_7(const COOMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = B->cols;
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int capacity = B->values.size() > C->nnz ? B->values.size() : C->nnz;
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = nnz;
+    // iterate over the nnz of B
+    for (int p = 0; p < B->values.size(); p++)
+    {
+        int i = B->row_indices[p];
+        int j = B->col_indices[p];
+
+        // search in the C matrix
+        for (int k = C->row_ptr[j]; k < C->row_ptr[j+1]; k++) {
+            if (C->col_ind[k] == i) {
+                col_ind[nnz] = j;
+                val[nnz] = B->values[p] * C->val[k];
+                nnz++;
+                break;
+            }
+        }
+        row_ptr[i+1] = nnz;
+    }
+    row_ptr[n] = nnz;
+
+    CSRMatrix* A = (CSRMatrix*)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+// A = einsum("ij,ji->ij", B, C)
+static CSRMatrix* _raw_kernel_1_8(const COOMatrix *B, const CSCMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = B->cols;
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int capacity = B->values.size() > C->nnz ? B->values.size() : C->nnz;
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = nnz;
+    // iterate over the nnz of B
+    for (int p = 0; p < B->values.size(); p++)
+    {
+        int i = B->row_indices[p];
+        int j = B->col_indices[p];
+
+        // search in the C matrix
+        for (int k = C->col_ptr[i]; k < C->col_ptr[i+1]; k++)
+        {
+            if (C->row_ind[k] == j) {
+                col_ind[nnz] = j;
+                val[nnz] = B->values[p] * C->val[k];
+                nnz++;
+                break;
+            }
+        }
+        row_ptr[i+1] = nnz;
+    }
+    row_ptr[n] = nnz;
+
+    CSRMatrix* A = (CSRMatrix*)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+// A = einsum("ij,ji->ij", B, C)
+static CSRMatrix* _raw_kernel_1_9(const COOMatrix *B, const COOMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = B->cols;
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int capacity = B->values.size() > C->values.size() ? B->values.size() : C->values.size();
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = nnz;
+    // iterate over the nnz of B
+    for (int p = 0; p < B->values.size(); p++)
+    {
+        int i = B->row_indices[p];
+        int j = B->col_indices[p];
+
+        // search in the C matrix
+        for (int k = 0; k < C->values.size(); k++)
+        {
+            if (C->row_indices[k] == j && C->col_indices[k] == i)
+            {
+                col_ind[nnz] = j;
+                val[nnz] = B->values[p] * C->values[k];
+                nnz++;
+                break;
+            }
+        }
+        row_ptr[i+1] = nnz;
+    }
+    row_ptr[n] = nnz;
+
+    CSRMatrix* A = (CSRMatrix*)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+static CSCMatrix* _raw_kernel_1_13(const CSCMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int nnz = 0;
+    int n = B->rows;
+    int m = B->cols;
+    int *col_ptr = (int *)calloc(m+1, sizeof(int));
+    int capacity = B->nnz > C->nnz ? B->nnz : C->nnz;
+    int *row_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    col_ptr[0] = nnz;
+    // iterate over the col of B
+    for (int j = 0; j < m; j++)
+    {
+        // iterate over the non-zeros of the j-th column
+        for (int p = B->col_ptr[j]; p < B->col_ptr[j+1]; p++)
+        {
+            int i = B->row_ind[p];
+
+            // search in the C matrix
+            // iterate through the non-zeros of the j-th column in C
+            for (int k = C->row_ptr[j]; k < C->row_ptr[j+1]; k++)
+            {
+                if (C->col_ind[k] == i)
+                {
+                    row_ind[nnz] = j;
+                    val[nnz] = B->val[p] * C->val[k];
+                    nnz++;
+                    break;
+                }
+            }
+        }
+        col_ptr[j+1] = nnz;
+    }
+    col_ptr[m] = nnz;
+
+    CSCMatrix* A = (CSCMatrix*)malloc(sizeof(CSCMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->col_ptr = col_ptr;
+    A->row_ind = row_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+static CSCMatrix* _raw_kernel_1_14(const CSCMatrix *B, const CSCMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int nnz = 0;
+    int n = B->rows;
+    int m = B->cols;
+    int *col_ptr = (int *)calloc(m+1, sizeof(int));
+    int capacity = B->nnz > C->nnz ? B->nnz : C->nnz;
+    int *row_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    col_ptr[0] = nnz;
+    // iterate over the col of B
+    for (int j = 0; j < m; j++)
+    {
+        // iterate over the non-zeros of the j-th column
+        for (int p = B->col_ptr[j]; p < B->col_ptr[j+1]; p++)
+        {
+            int i = B->row_ind[p];
+
+            // search in the C matrix
+            // iterate through the non-zeros of the j-th row in C
+            for (int k = C->col_ptr[i]; k < C->col_ptr[i+1]; k++)
+            {
+                if (C->row_ind[k] == j) {
+                    row_ind[nnz] = j;
+                    val[nnz] = B->val[p] * C->val[k];
+                    nnz++;
+                    break;
+                }
+            }
+        }
+        col_ptr[j+1] = nnz;
+    }
+    col_ptr[m] = nnz;
+
+    CSCMatrix* A = (CSCMatrix*)malloc(sizeof(CSCMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->col_ptr = col_ptr;
+    A->row_ind = row_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (element wise row-col multiplication)
+// A(i, j) = B(i, j) * C(j, i)
+static CSCMatrix* _raw_kernel_1_15(const CSCMatrix *B, const COOMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch!\n");
+        exit(1);
+    }
+
+    int nnz = 0;
+    int n = B->rows;
+    int m = B->cols;
+    int *col_ptr = (int *)calloc(m+1, sizeof(int));
+    int capacity = B->nnz > C->values.size() ? B->nnz : C->values.size();
+    int *row_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+
+    col_ptr[0] = nnz;
+    // iterate over the col of B
+    for (int j = 0; j < m; j++)
+    {
+        // iterate over the non-zeros of the j-th column
+        for (int p = B->col_ptr[j]; p < B->col_ptr[j+1]; p++)
+        {
+            int i = B->row_ind[p];
+
+            // search in the C matrix
+            // iterate through the non-zeros of the j-th row in C
+            for (int k = 0; k < C->row_indices.size(); k++)
+            {
+                if (C->row_indices[k] == j && C->col_indices[k] == i)
+                {
+                    row_ind[nnz] = j;
+                    val[nnz] = B->val[p] * C->values[k];
+                    // printf("i: %d\tj: %d\n", i, j);
+                    // printf("%.2f\n", val[nnz]);
+                    nnz++;
+                    break;
+                }
+            }
+        }
+        col_ptr[j+1] = nnz;
+    }
+    col_ptr[m] = nnz;
+
+    CSCMatrix* A = (CSCMatrix*)malloc(sizeof(CSCMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->col_ptr = col_ptr;
+    A->row_ind = row_ind;
     A->val = val;
     return A;
 }
@@ -649,6 +1052,9 @@ double raw_kernel_1_1(const COOMatrix &B, const COOMatrix &C)
     COO_to_CSR(C, csrC);
     clock_gettime(CLOCK_MONOTONIC, &start);
     CSRMatrix* result = _raw_kernel_1_1(&csrB, &csrC);
+    // std::cout << "============= CSR CSR CSR =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
     clock_gettime(CLOCK_MONOTONIC, &end);
     freeCSRMatrix(&csrB);
     freeCSRMatrix(&csrC);
@@ -658,3 +1064,152 @@ double raw_kernel_1_1(const COOMatrix &B, const COOMatrix &C)
     return elapsed;
 }
 
+double raw_kernel_1_2(const COOMatrix &B, const COOMatrix &C) 
+{
+    struct timespec start, end;
+    CSRMatrix csrB;
+    CSCMatrix cscC;
+    COO_to_CSR(B, csrB);
+    COO_to_CSC(C, cscC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_1_2(&csrB, &cscC);
+    // std::cout << "============= CSR CSR CSC =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSRMatrix(&csrB);
+    freeCSCMatrix(&cscC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_1_3(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSRMatrix csrB;
+    COO_to_CSR(B, csrB);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_1_3(&csrB, &C);
+    // std::cout << "============= CSR CSR COO =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_1_7(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSRMatrix csrC;
+    COO_to_CSR(C, csrC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_1_7(&B, &csrC);
+    // std::cout << "============= CSR COO CSR =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_1_8(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSCMatrix cscC;
+    COO_to_CSC(C, cscC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_1_8(&B, &cscC);
+    // std::cout << "============= CSR COO CSC =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSCMatrix(&cscC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_1_9(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_1_9(&B, &C);
+    // std::cout << "============= CSR COO COO =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_1_13(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSCMatrix cscb;
+    CSRMatrix csrc;
+    COO_to_CSC(B, cscb);
+    COO_to_CSR(C, csrc);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSCMatrix* result = _raw_kernel_1_13(&cscb, &csrc);
+    // std::cout << "============= CSC CSC CSR =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSRMatrix(&csrc);
+    freeCSCMatrix(&cscb);
+    freeCSCMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_1_14(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSCMatrix cscB;
+    CSCMatrix cscC;
+    COO_to_CSC(B, cscB);
+    COO_to_CSC(C, cscC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSCMatrix* result = _raw_kernel_1_14(&cscB, &cscC);
+    // std::cout << "============= CSC CSC CSR =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSCMatrix(&cscC);
+    freeCSCMatrix(&cscB);
+    freeCSCMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_1_15(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSCMatrix cscB;
+    COO_to_CSC(B, cscB);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSCMatrix* result = _raw_kernel_1_15(&cscB, &C);
+    // std::cout << "============= CSC CSC COO =============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    freeCSCMatrix(&cscB);
+    freeCSCMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}

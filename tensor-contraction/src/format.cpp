@@ -23,6 +23,29 @@ void freeCSRMatrix(CSRMatrix *M)
     M->nnz = 0;
 }
 
+void freeCSCMatrix(CSCMatrix *M) 
+{
+    if (!M) return;  // null check
+
+    if (M->col_ptr) {
+        free(M->col_ptr);
+        M->col_ptr = NULL;
+    }
+    if (M->row_ind) {
+        free(M->row_ind);
+        M->row_ind = NULL;
+    }
+    if (M->val) {
+        free(M->val);
+        M->val = NULL;
+    }
+
+    // Reset metadata
+    M->rows = 0;
+    M->cols = 0;
+    M->nnz = 0;
+}
+
 void freeCOOMatrix(COOMatrix *M) 
 {
     if (!M) return;  // null check
@@ -205,5 +228,45 @@ void COO_to_CSR(const COOMatrix &coo, CSRMatrix &csr) {
         csr.col_ind[dest] = coo.col_indices[idx];
         csr.val[dest] = coo.values[idx];
         counter[row]++;
+    }
+}
+
+void COO_to_CSC(const COOMatrix &coo, CSCMatrix &csc) {
+    csc.rows = coo.rows;
+    csc.cols = coo.cols;
+    csc.nnz = coo.values.size();
+
+    csc.col_ptr = (int *)calloc((csc.cols + 1), sizeof(int));
+    csc.row_ind = (int *)malloc(csc.nnz * sizeof(int));
+    csc.val = (double *)malloc(csc.nnz * sizeof(double));
+
+    // Create a vector of indices for sorting
+    std::vector<int> perm(coo.values.size());
+    for (int i = 0; i < coo.values.size(); i++) perm[i] = i;
+
+    std::sort(perm.begin(), perm.end(), [&](int a, int b) {
+        if (coo.col_indices[a] != coo.col_indices[b])
+            return coo.col_indices[a] < coo.col_indices[b];
+        return coo.row_indices[a] < coo.row_indices[b];
+    });
+
+    // Count non-zeros per column
+    for (int i = 0; i < csc.nnz; i++) {
+        csc.col_ptr[coo.col_indices[perm[i]] + 1]++;
+    }
+
+    // Prefix sum for col_ptr
+    for (int i = 0; i < csc.cols; i++)
+        csc.col_ptr[i + 1] += csc.col_ptr[i];
+
+    // Fill col_ind and val using the permutation
+    std::vector<int> counter(csc.cols, 0);
+    for (int i = 0; i < csc.nnz; i++) {
+        int idx = perm[i];
+        int col = coo.col_indices[idx];
+        int dest = csc.col_ptr[col] + counter[col];
+        csc.row_ind[dest] = coo.row_indices[idx];
+        csc.val[dest] = coo.values[idx];
+        counter[col]++;
     }
 }

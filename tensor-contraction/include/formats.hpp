@@ -148,8 +148,10 @@ typedef struct CSRMatrix {
 } CSRMatrix;
 
 void COO_to_CSR(const COOMatrix &coo, CSRMatrix &csr);
+void COO_to_CSC(const COOMatrix &coo, CSCMatrix &csc);
 void freeCSRMatrix(CSRMatrix *M);
 void freeCOOMatrix(COOMatrix *M);
+void freeCSCMatrix(CSCMatrix *M);
 CSRMatrix generate_random_CSR(int rows, int cols, int nnz_per_row);
 void printCSRDense(const CSRMatrix *M);
 void printCSR(const CSRMatrix *M);
