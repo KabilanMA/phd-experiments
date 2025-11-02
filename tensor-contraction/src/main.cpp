@@ -191,7 +191,7 @@ void experiment_2(float sparsity_starter)
 
     while (sparsity < 1)
     {
-        // // // std::string results_file = create_results_file(("results_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Unzipper_Time,TACO_Time", "kernel2");
+        // // // // std::string results_file = create_results_file(("results_" + std::to_string((int)(sparsity*100)) + ".csv"), "Dimension,NNZ_per_row,Sparsity,Unzipper_Time,TACO_Time", "kernel2");
         for (int dim = 500; dim < 1001; dim++)
         {
             int nnz_per_row = calculate_nnz_per_row(dim, sparsity);
@@ -203,17 +203,17 @@ void experiment_2(float sparsity_starter)
 
             double base_raw_kernel_time = raw_kernel_2_1(B, C);
             double hash_raw_kernel_time = raw_kernel_2_2(B, C);
-            // // double taco_time = taco_kernel_2_1(B, C, workspace);
+            // // // double taco_time = taco_kernel_2_1(B, C, workspace);
             workspace = Tensor<double>();
             freeCOOMatrix(&B);
             freeCOOMatrix(&C);
 
             // Save results to CSV
-            // // // save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time, taco_time);
+            // // // // save_to_csv(results_file, dim, nnz_per_row, sparsity, raw_kernel_time, taco_time);
 
             std::cout << "Dim: " << dim << ", NNZ/Row: " << nnz_per_row 
                     << ", Sparsity: " << sparsity
-                    // // << ", TACO: " << taco_time
+                    // // // << ", TACO: " << taco_time
                     << ", Unzipper Time Base: " << base_raw_kernel_time << std::endl;
                 std::cout << "=================================================" << std::endl;
                 break;
@@ -298,11 +298,9 @@ void experiment_4(float sparsity_starter)
                     << ", Unzipper Time: " << raw_kernel_time  << std::endl;
                 std::cout << "=================================================" << std::endl;
                 break;
-                break;
         }
 
         sparsity += 0.05;
-        break;
         break;
     }
 }
