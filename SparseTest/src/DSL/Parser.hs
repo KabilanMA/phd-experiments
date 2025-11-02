@@ -21,9 +21,9 @@ import DSL.AST
 -- Parser type
 type Parser = Parsec Void String
 
--- -------------------------
+-- ==========================================
 -- Lexer helpers
--- -------------------------
+-- ==========================================
 sc :: Parser ()
 sc = L.space space1 lineComment blockComment
   where
@@ -45,9 +45,9 @@ commaSep1 p = p `sepBy1` symbol ","
 ident :: Parser String
 ident = lexeme ((:) <$> letterChar <*> many (alphaNumChar <|> char '_'))
 
--- -------------------------
+-- ==========================================
 -- Primitive parsers
--- -------------------------
+-- ==========================================
 pDType :: Parser DType
 pDType = lexeme $ choice
   [ TInt   <$ (string' "int"   <* notFollowedBy alphaNumChar)
@@ -64,9 +64,9 @@ pLevelFormat = lexeme $ choice
 pDim :: Parser Dim
 pDim = Dim <$> lexeme L.decimal
 
--- -------------------------
+-- ==========================================
 -- Tensor Declaration
--- -------------------------
+-- ==========================================
 -- Example:
 -- tensor A [3,3] [Dense,Sparse] float
 pTensorDecl :: Parser TensorDecl

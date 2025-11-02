@@ -1,5 +1,8 @@
-import Data.List
+{-# LANGUAGE DeriveGeneric #-}
 
+import Data.List
+import GHC.Generics (Generic)
+import Data.Aeson (ToJSON, FromJSON)
 
 -- sayMe :: (Integral a) => a -> String
 sayMe 1 = "One!"
@@ -118,3 +121,7 @@ data Car a b c = Car { company :: a
                      , model :: b
                      , year :: c 
                      } deriving (Show)
+
+
+newtype Index = Ix { unIx :: Char }
+  deriving (Eq, Show, Generic)
