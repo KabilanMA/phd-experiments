@@ -6,9 +6,7 @@ from dataclasses import dataclass, field
 
 class Storage(Enum):
     DENSE = 1
-    CSR = 2
-    CSC = 3
-    COO = 4
+    SPARSE = 2
 
 class TENSOR_OP(Enum):
     ADD = 1
@@ -16,352 +14,400 @@ class TENSOR_OP(Enum):
     MUL = 3
     DIV = 4
 
+class Reduction(Enum):
+    summation=1
+    maximum=2
+    minimum=3
+    auto=4
+    non=5
+
 # ----------------------------
 # High-level IR (user-facing)
 # ----------------------------
-class Tensor:
-    def __init__(self, name: str, order: int, dimensions: Tuple[int]):
-        self.name = name
-        self.order = order
-        self.dimensions = dimensions
+class Axis:
+    def __init__(self, name: str, sparsity: Storage, tensor_name: str, size: int):
+        self.axis_name = name
+        self.tensor_name = tensor_name
+        self.sparsity = sparsity
         self.values = []
-        self.value_indices = []
-        self._row_ptr = []
-        self._col_ind = []
-        self.csr_values = []
-        # TODO: Add more storage formats
+        self.size = size
+        self.pos = []
+        self.idx = []
     
-    def __str__(self) -> str:
-        return f"Tensor(name={self.name}, order={self.order}, dimensions={self.dimensions}, nnz={len(self.values)})"
-
-    def insert(self, indices: tuple, value: Union[float, int]) -> None:
-        if self.order != len(indices):
-            print(f"[Error] Invalid index {indices}: {self.name} expects indices of order {self.order}")
-            return
-        self.values.append(value)
-        self.value_indices.append(indices)
+    def __str__(self):
+        return f"Axis: {self.tensor_name}({self.axis_name}\n\tSize: {self.size})"
     
-    def pack(self, format: Storage) -> None:
-        if format == Storage.CSR:
-            print(f"[Info] Packing tensor {self.name} into CSR format")
+
+class Tensor:
+    def __init__(self, name: str, dimensions: List[int], storage_fmt: List[Storage]):
+        if (len(dimensions) != len(storage_fmt)):
+            raise TypeError("Error 1")
+        
+        self.name : str = name
+        self.order : int = len(dimensions)
+        self.dimensions : List[int] = dimensions
+        self.axis: List[Axis] = []
+        self.storage_fmt : List[Storage] = storage_fmt
 
 
+    def __str__(self):
+        return f"Tensor(name={self.name}, order={self.order}, dimensions={self.dimensions}, storage_fmt={len(self.storage_fmt)})"
 
-class Matrix(Tensor):
-    def __init__(self, name: str, format: Storage, dimensions: Tuple[int]):
-        super().__init__(name, 2, dimensions)
-        self.format = format
-    
-    def __str__(self) -> str:
-        return f"Matrix(name={self.name}, format={self.format}, dimensions={self.dimensions}, nnz={len(self.values)})"
-
-class EinsumOp:
-    def __init__(self, output: Tensor, expr: str, inputs: Tuple[Tensor], operator: TENSOR_OP = None):
+class TensorOp:
+    def __init__(self, output: Tensor, expr: str, inputs: List[Tensor], operator: TENSOR_OP = TENSOR_OP.MUL, reduction: Reduction = Reduction.summation):
         self.output: Tensor = output
         self.expr: str = expr
-        self.inputs: Tuple[Tensor] = inputs
+        self.inputs: List[Tensor] = inputs
         self.operator: TENSOR_OP = operator
     
-    def __str__(self) -> str:
-        input_names = [t.name for t in self.inputs]
-        return f"EinsumOp(expr='{self.expr}', operations='{'None' if self.operator == None else self.operator.name}', inputs={input_names}, output={self.output.name})"
+    def __str__(self):
+        lhs,rhs = self.expr.split("->")
+        input_tensors = [tensor.__str__() for tensor in self.inputs]
+        return f"Tensor Operation {lhs} \n\ton Tensors: {input_tensors} \n\twith output: {self.output}{rhs}"
 
-# ----------------------------
-# Low-level IR (for lowering/codegen)
-# ----------------------------
+# class Tensor:
+#     def __init__(self, name: str, order: int, dimensions: Tuple[int]):
+#         self.name = name
+#         self.order = order
+#         self.dimensions = dimensions
+#         self.values = []
+#         self.value_indices = []
+#         self._row_ptr = []
+#         self._col_ind = []
+#         self.csr_values = []
+#         # TODO: Add more storage formats
+    
+#     def __str__(self) -> str:
+#         return f"Tensor(name={self.name}, order={self.order}, dimensions={self.dimensions}, nnz={len(self.values)})"
 
-class LoopVar:
-    def __init__(self, name: str):
-        self.name: str = name
+#     def insert(self, indices: tuple, value: Union[float, int]) -> None:
+#         if self.order != len(indices):
+#             print(f"[Error] Invalid index {indices}: {self.name} expects indices of order {self.order}")
+#             return
+#         self.values.append(value)
+#         self.value_indices.append(indices)
+    
+#     def pack(self, format: Storage) -> None:
+#         if format == Storage.CSR:
+#             print(f"[Info] Packing tensor {self.name} into CSR format")
 
-    def __str__(self): return self.name
 
-class LoopNest:
-    def __init__(self, var: LoopVar, body: list, maximum_limit: str):
-        self.var: LoopVar = var
-        self.body: list = body  # list of IR nodes
-        self.maximum_limit: str = maximum_limit
 
-    def __str__(self): return f"Loop({self.var}) {{ {self.body} }}"
+# class Matrix(Tensor):
+#     def __init__(self, name: str, format: Storage, dimensions: Tuple[int]):
+#         super().__init__(name, 2, dimensions)
+#         self.format = format
+    
+#     def __str__(self) -> str:
+#         return f"Matrix(name={self.name}, format={self.format}, dimensions={self.dimensions}, nnz={len(self.values)})"
 
-class Load:
-    def __init__(self, tensor: Tensor, index: Tuple[str]):
-        self.tensor = tensor
-        self.index = index
+# # class EinsumOp:
+# #     def __init__(self, output: Tensor, expr: str, inputs: Tuple[Tensor], operator: TENSOR_OP = None):
+# #         self.output: Tensor = output
+# #         self.expr: str = expr
+# #         self.inputs: Tuple[Tensor] = inputs
+# #         self.operator: TENSOR_OP = operator
+    
+#     def __str__(self) -> str:
+#         input_names = [t.name for t in self.inputs]
+#         return f"EinsumOp(expr='{self.expr}', operations='{'None' if self.operator == None else self.operator.name}', inputs={input_names}, output={self.output.name})"
 
-    def __str__(self): return f"Load({self.tensor.name}[{','.join(self.index)}])"
+# # ----------------------------
+# # Low-level IR (for lowering/codegen)
+# # ----------------------------
 
-class IfStmt:
-    def __init__(self, tensor: Tensor, index: Tuple[str]):
-        self.tensor = tensor
-        self.index = index
+# class LoopVar:
+#     def __init__(self, name: str):
+#         self.name: str = name
+
+#     def __str__(self): return self.name
+
+# class LoopNest:
+#     def __init__(self, var: LoopVar, body: list, maximum_limit: str):
+#         self.var: LoopVar = var
+#         self.body: list = body  # list of IR nodes
+#         self.maximum_limit: str = maximum_limit
+
+#     def __str__(self): return f"Loop({self.var}) {{ {self.body} }}"
+
+# class Load:
+#     def __init__(self, tensor: Tensor, index: Tuple[str]):
+#         self.tensor = tensor
+#         self.index = index
+
+#     def __str__(self): return f"Load({self.tensor.name}[{','.join(self.index)}])"
+
+# class IfStmt:
+#     def __init__(self, tensor: Tensor, index: Tuple[str]):
+#         self.tensor = tensor
+#         self.index = index
+
+# # class Store:
+# #     def __init__(self, tensor: Tensor, indices: Tuple[str], value):
+# #         self.tensor = tensor
+# #         self.indices = indices
+# #         self.value = value
+
+# #     def __str__(self): return f"Store({self.tensor.name}[{','.join(self.indices)}] = {self.value})"
+# class StorageDataType(Enum):
+#     INT = 0
+#     FLOAT = 1
+#     DOUBLE = 2
+
+# class StoreList:
+#     def __init__(self, name: str, size: int = 0, data_type: StorageDataType = StorageDataType.INT):
+#         self.name = name
+#         self.size = size
+#         self.storage_data_type = data_type
+
+#     def __str__(self):
+#         return f"{self.name} with size {self.size}"
+    
+#     def emit_decl(self):
+#         if self.storage_data_type == StorageDataType.INT:
+#             return f"int *{self.name} = malloc({self.size} * sizeof(int));"
+#         elif self.storage_data_type == StorageDataType.FLOAT:
+#             return f"float *{self.name} = malloc({self.size} * sizeof(float));"
+#         elif self.storage_data_type == StorageDataType.DOUBLE:
+#             return f"double *{self.name} = malloc({self.size} * sizeof(double));"
+    
+#     def emit_free(self):
+#         return f"free({self.name});"
+    
+#     def emit_store_val(self, index: str):
+#         return f"{self.name}[{index}]"
+
+# class Number:
+#     def __init__(self, name: str, type: StorageDataType):
+#         self.name = name
+#         self.type = type
+
+#     def __str__(self):
+#         return f"Number({self.name}, type={self.type})"
+    
+#     def emit_decl(self, value: Union[Number, str]):
+#         if self.type == StorageDataType.INT:
+#             return f"int {self.name} = {value};"
+#         elif self.type == StorageDataType.FLOAT:
+#             return f"float {self.name} = {value};"
+#         elif self.type == StorageDataType.DOUBLE:
+#             return f"double {self.name} = {value};"
+    
+#     def emit_assign(self, value: Union[Number, str]):
+#         return f"{self.name} = {value};"
+    
+
+    
+# class AssignList:
+#     def __init__(self, lhs: Store, rhs: Load):
+#         self.lhs = lhs
+#         self.rhs = rhs
+
+#     def __str__(self):
+#         return f"Assign(lhs={self.lhs}, rhs={self.rhs})"
+    
+#     def emit(self):
+#         return f"{self.lhs.emit()} = {self.rhs.emit()};"
+
 
 # class Store:
-#     def __init__(self, tensor: Tensor, indices: Tuple[str], value):
-#         self.tensor = tensor
-#         self.indices = indices
+#     def __init__(self, store_value: Tensor, index: str, value):
+#         self.tensor = store_value
+#         self.index = index
 #         self.value = value
 
-#     def __str__(self): return f"Store({self.tensor.name}[{','.join(self.indices)}] = {self.value})"
-class StorageDataType(Enum):
-    INT = 0
-    FLOAT = 1
-    DOUBLE = 2
-
-class StoreList:
-    def __init__(self, name: str, size: int = 0, data_type: StorageDataType = StorageDataType.INT):
-        self.name = name
-        self.size = size
-        self.storage_data_type = data_type
-
-    def __str__(self):
-        return f"{self.name} with size {self.size}"
-    
-    def emit_decl(self):
-        if self.storage_data_type == StorageDataType.INT:
-            return f"int *{self.name} = malloc({self.size} * sizeof(int));"
-        elif self.storage_data_type == StorageDataType.FLOAT:
-            return f"float *{self.name} = malloc({self.size} * sizeof(float));"
-        elif self.storage_data_type == StorageDataType.DOUBLE:
-            return f"double *{self.name} = malloc({self.size} * sizeof(double));"
-    
-    def emit_free(self):
-        return f"free({self.name});"
-    
-    def emit_store_val(self, index: str):
-        return f"{self.name}[{index}]"
-
-class Number:
-    def __init__(self, name: str, type: StorageDataType):
-        self.name = name
-        self.type = type
-
-    def __str__(self):
-        return f"Number({self.name}, type={self.type})"
-    
-    def emit_decl(self, value: Union[Number, str]):
-        if self.type == StorageDataType.INT:
-            return f"int {self.name} = {value};"
-        elif self.type == StorageDataType.FLOAT:
-            return f"float {self.name} = {value};"
-        elif self.type == StorageDataType.DOUBLE:
-            return f"double {self.name} = {value};"
-    
-    def emit_assign(self, value: Union[Number, str]):
-        return f"{self.name} = {value};"
-    
-
-    
-class AssignList:
-    def __init__(self, lhs: Store, rhs: Load):
-        self.lhs = lhs
-        self.rhs = rhs
-
-    def __str__(self):
-        return f"Assign(lhs={self.lhs}, rhs={self.rhs})"
-    
-    def emit(self):
-        return f"{self.lhs.emit()} = {self.rhs.emit()};"
-
-
-class Store:
-    def __init__(self, store_value: Tensor, index: str, value):
-        self.tensor = store_value
-        self.index = index
-        self.value = value
-
-    def __str__(self): 
-        return f"Store({self.tensor}[{','.join(self.index)}] = {self.value})"
+#     def __str__(self): 
+#         return f"Store({self.tensor}[{','.join(self.index)}] = {self.value})"
     
 
 
-@dataclass
-class Expr:
-    pass
+# @dataclass
+# class Expr:
+#     pass
 
-@dataclass
-class Var(Expr):
-    name: str
+# @dataclass
+# class Var(Expr):
+#     name: str
 
-@dataclass
-class Int(Expr):
-    value: int
+# @dataclass
+# class Int(Expr):
+#     value: int
 
-@dataclass
-class Double(Expr):
-    value: float
+# @dataclass
+# class Double(Expr):
+#     value: float
 
-@dataclass
-class String(Expr):
-    value: str
+# @dataclass
+# class String(Expr):
+#     value: str
 
-@dataclass
-class BinaryOp:
-    op: TENSOR_OP
-    lhs: Expr
-    rhs: Expr
+# @dataclass
+# class BinaryOp:
+#     op: TENSOR_OP
+#     lhs: Expr
+#     rhs: Expr
 
-# --- Expressions ---
-@dataclass
-class CExpr:
-    pass
+# # --- Expressions ---
+# @dataclass
+# class CExpr:
+#     pass
 
-@dataclass
-class CVar(CExpr):
-    name: str
+# @dataclass
+# class CVar(CExpr):
+#     name: str
 
-@dataclass
-class CInt(CExpr):
-    value: int
+# @dataclass
+# class CInt(CExpr):
+#     value: int
 
-@dataclass
-class CDouble(CExpr):
-    value: float
+# @dataclass
+# class CDouble(CExpr):
+#     value: float
 
-@dataclass
-class CString(CExpr):
-    value: str
+# @dataclass
+# class CString(CExpr):
+#     value: str
 
-@dataclass
-class CBinary(CExpr):
-    op: str
-    lhs: CExpr
-    rhs: CExpr
+# @dataclass
+# class CBinary(CExpr):
+#     op: str
+#     lhs: CExpr
+#     rhs: CExpr
 
-@dataclass
-class CCall(CExpr):
-    func: str
-    args: List[CExpr]
+# @dataclass
+# class CCall(CExpr):
+#     func: str
+#     args: List[CExpr]
 
-@dataclass
-class CCast(CExpr):
-    ctype: str
-    expr: CExpr
+# @dataclass
+# class CCast(CExpr):
+#     ctype: str
+#     expr: CExpr
 
-@dataclass
-class CMember(CExpr):
-    expr: CExpr       # e.g. CVar("B")
-    member: str       # "rows"
-    deref: bool = True # use -> if True else .
+# @dataclass
+# class CMember(CExpr):
+#     expr: CExpr       # e.g. CVar("B")
+#     member: str       # "rows"
+#     deref: bool = True # use -> if True else .
 
-@dataclass
-class CIndex(CExpr):
-    array: CExpr      # CVar or CMember
-    index: CExpr      # index expression
+# @dataclass
+# class CIndex(CExpr):
+#     array: CExpr      # CVar or CMember
+#     index: CExpr      # index expression
 
-# --- Statements ---
-@dataclass
-class CStmt:
-    pass
+# # --- Statements ---
+# @dataclass
+# class CStmt:
+#     pass
 
-@dataclass
-class CDecl(CStmt):
-    ctype: str
-    name: str
-    init: Optional[CExpr] = None
+# @dataclass
+# class CDecl(CStmt):
+#     ctype: str
+#     name: str
+#     init: Optional[CExpr] = None
 
-@dataclass
-class CAssign(CStmt):
-    lhs: CExpr
-    rhs: CExpr
+# @dataclass
+# class CAssign(CStmt):
+#     lhs: CExpr
+#     rhs: CExpr
 
-@dataclass
-class CExprStmt(CStmt):
-    expr: CExpr
+# @dataclass
+# class CExprStmt(CStmt):
+#     expr: CExpr
 
-@dataclass
-class CFor(CStmt):
-    init: CStmt        # usually CDecl or CAssign
-    cond: CExpr
-    step: CStmt        # usually CExprStmt with assignment/increment
-    body: List[CStmt]
+# @dataclass
+# class CFor(CStmt):
+#     init: CStmt        # usually CDecl or CAssign
+#     cond: CExpr
+#     step: CStmt        # usually CExprStmt with assignment/increment
+#     body: List[CStmt]
 
-@dataclass
-class CIf(CStmt):
-    cond: CExpr
-    then_body: List[CStmt]
-    else_body: Optional[List[CStmt]] = None
+# @dataclass
+# class CIf(CStmt):
+#     cond: CExpr
+#     then_body: List[CStmt]
+#     else_body: Optional[List[CStmt]] = None
 
-@dataclass
-class CReturn(CStmt):
-    expr: Optional[CExpr] = None
+# @dataclass
+# class CReturn(CStmt):
+#     expr: Optional[CExpr] = None
 
-# --- Top-level ---
-@dataclass
-class Include:
-    header: str
+# # --- Top-level ---
+# @dataclass
+# class Include:
+#     header: str
 
-@dataclass
-class StructField:
-    ctype: str
-    name: str
+# @dataclass
+# class StructField:
+#     ctype: str
+#     name: str
 
-@dataclass
-class StructDecl:
-    name: str
-    fields: List[StructField]
+# @dataclass
+# class StructDecl:
+#     name: str
+#     fields: List[StructField]
 
-@dataclass
-class FunctionDecl:
-    ret_type: str
-    name: str
-    params: List[Tuple[str, str]]   # [(ctype, name), ...]
-    body: List[CStmt]
+# @dataclass
+# class FunctionDecl:
+#     ret_type: str
+#     name: str
+#     params: List[Tuple[str, str]]   # [(ctype, name), ...]
+#     body: List[CStmt]
 
 
-# ------------------------
-# Example usage (for quick testing)
-# ------------------------
-if __name__ == "__main__":
-    includes = [Include("<stdio.h>"), Include("<stdlib.h>"), Include("<time.h>"), Include("<math.h>"), Include("<stdarg.h>")]
+# # ------------------------
+# # Example usage (for quick testing)
+# # ------------------------
+# if __name__ == "__main__":
+#     includes = [Include("<stdio.h>"), Include("<stdlib.h>"), Include("<time.h>"), Include("<math.h>"), Include("<stdarg.h>")]
 
-    csr_fields = [
-        StructField("int", "rows"),
-        StructField("int", "cols"),
-        StructField("int", "nnz"),
-        StructField("int *", "row_ptr"),
-        StructField("int *", "col_ind"),
-        StructField("double", "val"),
-    ]
-    csr_struct = StructDecl("CSRMatrix", csr_fields)
+#     csr_fields = [
+#         StructField("int", "rows"),
+#         StructField("int", "cols"),
+#         StructField("int", "nnz"),
+#         StructField("int *", "row_ptr"),
+#         StructField("int *", "col_ind"),
+#         StructField("double", "val"),
+#     ]
+#     csr_struct = StructDecl("CSRMatrix", csr_fields)
 
-    # Function signature: CSRMatrix multipleCSR(const CSRMatrix *B, const CSRMatrix *C)
-    params = [("const CSRMatrix *", "B"), ("const CSRMatrix *", "C")]
+#     # Function signature: CSRMatrix multipleCSR(const CSRMatrix *B, const CSRMatrix *C)
+#     params = [("const CSRMatrix *", "B"), ("const CSRMatrix *", "C")]
 
-    # Body statements (sketching main ones)
-    body = []
+#     # Body statements (sketching main ones)
+#     body = []
 
-    # int n = B->rows;
-    body.append(CDecl("int", "n", CMember(CVar("B"), "rows", deref=True)))
-    #int m = C->cols;
-    body.append(CDecl("int", "n", CMember(CVar("C"), "rows", deref=True)))
+#     # int n = B->rows;
+#     body.append(CDecl("int", "n", CMember(CVar("B"), "rows", deref=True)))
+#     #int m = C->cols;
+#     body.append(CDecl("int", "n", CMember(CVar("C"), "rows", deref=True)))
 
-    # int * row_ptr = calloc(n+1, sizeof(int));
-    body.append(CDecl("int *", "row_ptr", CCall("calloc", [CBinary("+", CVar("n"), CInt(1)), CCall("sizeof", [CVar("int")])])))
+#     # int * row_ptr = calloc(n+1, sizeof(int));
+#     body.append(CDecl("int *", "row_ptr", CCall("calloc", [CBinary("+", CVar("n"), CInt(1)), CCall("sizeof", [CVar("int")])])))
 
-    # int capacity = B->nnz > C->nnz ? B->nnz : C->nnz;
-    cond_cap = CBinary(">", CMember(CVar("B"), "nnz", deref=True), CMember(CVar("C"), "nnz", deref=True))
-    cap_expr = CCall("(", [cond_cap])
+#     # int capacity = B->nnz > C->nnz ? B->nnz : C->nnz;
+#     cond_cap = CBinary(">", CMember(CVar("B"), "nnz", deref=True), CMember(CVar("C"), "nnz", deref=True))
+#     cap_expr = CCall("(", [cond_cap])
 
-    # Main Loop Construct
-    # inner if: if (C->col_ind[k] == i) { col_ind[nnz] = j; val[nnz] = B->val[p] * C->val[k]; nnz++; }
-    if_cond = CBinary("==", CIndex(CMember(CVar("C"), "col_ind", deref=True), CVar("k")), CVar("i"))
-    inner_then = [
-        CAssign(CIndex(CVar("col_ind"), CVar("nnz")), CVar("j")),
-        CAssign(CIndex(CVar("val"), CVar("nnz")),
-            CBinary("*", CIndex(CMember(CVar("B"), "val", deref=True), CVar("p")),
-                          CIndex(CMember(CVar("C"), "val", deref=True), CVar("k")))),
-        CExprStmt(CCall("++", [CVar("nnz")]))  # emit as "nnz++;"
-    ]
-    inner_if = CIf(if_cond, inner_then)
+#     # Main Loop Construct
+#     # inner if: if (C->col_ind[k] == i) { col_ind[nnz] = j; val[nnz] = B->val[p] * C->val[k]; nnz++; }
+#     if_cond = CBinary("==", CIndex(CMember(CVar("C"), "col_ind", deref=True), CVar("k")), CVar("i"))
+#     inner_then = [
+#         CAssign(CIndex(CVar("col_ind"), CVar("nnz")), CVar("j")),
+#         CAssign(CIndex(CVar("val"), CVar("nnz")),
+#             CBinary("*", CIndex(CMember(CVar("B"), "val", deref=True), CVar("p")),
+#                           CIndex(CMember(CVar("C"), "val", deref=True), CVar("k")))),
+#         CExprStmt(CCall("++", [CVar("nnz")]))  # emit as "nnz++;"
+#     ]
+#     inner_if = CIf(if_cond, inner_then)
 
-    # build inner-most loop: for (int k = C->row_ptr[j]; k < C->row_ptr[j+1]; k++) { inner_if }
-    k_init = CDecl("int", "k", CMember(CMember(CVar("C"), "row_ptr", deref=True), "j"))  # rough; better to emit CMember[CIndex] but simplified
-    k_cond = CBinary("<", CVar("k"), CMember(CMember(CVar("C"), "row_ptr", deref=True), "j+1")) 
-    k_step = CExprStmt(CCall("++", [CVar("k")]))
-    k_loop = CFor(k_init, k_cond, k_step, [inner_if])
+#     # build inner-most loop: for (int k = C->row_ptr[j]; k < C->row_ptr[j+1]; k++) { inner_if }
+#     k_init = CDecl("int", "k", CMember(CMember(CVar("C"), "row_ptr", deref=True), "j"))  # rough; better to emit CMember[CIndex] but simplified
+#     k_cond = CBinary("<", CVar("k"), CMember(CMember(CVar("C"), "row_ptr", deref=True), "j+1")) 
+#     k_step = CExprStmt(CCall("++", [CVar("k")]))
+#     k_loop = CFor(k_init, k_cond, k_step, [inner_if])
 
-    body.append(CExprStmt(CCall("/* final construct CSRMatrix A init */", [])))
-    body.append(CReturn(CVar("A")))
+#     body.append(CExprStmt(CCall("/* final construct CSRMatrix A init */", [])))
+#     body.append(CReturn(CVar("A")))
 
-    fn = FunctionDecl("CSRMatrix", "multiplyCSR", params, body)
+#     fn = FunctionDecl("CSRMatrix", "multiplyCSR", params, body)

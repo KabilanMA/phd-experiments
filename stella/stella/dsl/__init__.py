@@ -1,3 +1,3 @@
-from .api import einsum_op
+from .api import tensor_op, extract_info
 
-__all__ = ["einsum_op"]
+__all__ = ["tensor_op", "extract_info"]
