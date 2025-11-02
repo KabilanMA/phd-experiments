@@ -1,2 +1,7 @@
 tensor A [3,3] [Dense,Sparse] float
 tensor B [2,3,4] [Dense,Dense,Dense] double
+tensor C [2,3,4] [Dense,Dense,Sparse] double
+tensor D [3,3] [Sparse,Dense] double
+
+A(i,j) = sum_k B(i,j,k) * C(j,i,k)
+D(i,j) = tranpose A(i,j)
