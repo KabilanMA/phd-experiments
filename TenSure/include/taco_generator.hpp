@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
-#include "taco.h"
+// #include "taco.h"
 #include <fstream>
 
 enum TensorFormat {

@@ -238,6 +238,7 @@ static double __taco_kernel_1_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
     double elapsed2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
     workspace = A;
+    std::cout << workspace << std::endl;
     Ct_2 = Tensor<double>();
     A = Tensor<double>();
     return (elapsed1+elapsed2);
