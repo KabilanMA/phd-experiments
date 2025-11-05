@@ -4,9 +4,3 @@
 [submodule "tools/sparsetir"]
 	path = tools/sparsetir
 	url = https://github.com/uwsampl/SparseTIR.git
-[submodule "TenSure/external/json"]
-	path = TenSure/external/json
-	url = https://github.com/nlohmann/json.git
-[submodule "TenSure/external/taco"]
-	path = TenSure/external/taco
-	url = https://github.com/tensor-compiler/taco.git
