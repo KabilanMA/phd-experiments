@@ -12,6 +12,7 @@
 #include <string.h>
 #include <iomanip>
 #include <algorithm>
+#include <unordered_map>
 // #include <linux/time.h>
 
 typedef struct COOMatrix {
@@ -143,6 +144,25 @@ typedef struct CSRMatrix {
         row_ptr = nullptr;
         col_ind = nullptr;
         val = nullptr;
+    }
+
+    // just a linear search
+    double get_element(int i, int j) const {
+        int left = row_ptr[i];
+        int right = row_ptr[i + 1] - 1;
+
+        while (left <= right) {
+            int mid = (left + right) >> 1;
+            int col = col_ind[mid];
+
+            if (col == j)
+                return val[mid];
+            else if (col < j)
+                left = mid + 1;
+            else
+                right = mid - 1;
+        }
+        return 0.0;
     }
 
 } CSRMatrix;

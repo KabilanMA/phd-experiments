@@ -202,7 +202,7 @@ void experiment_2(float sparsity_starter)
     int maxDim = 10000;
     int sample_size = 20;
 
-    std::vector<float> sparsity_list = {0.05, 0.1, 0.25, 0.5};
+    std::vector<float> sparsity_list = {0.01};
     std::set<int> dims;
     double logMin = std::log10(minDim);
     double logMax = std::log10(maxDim);
@@ -213,45 +213,220 @@ void experiment_2(float sparsity_starter)
         dims.insert(dim);
     }
 
-    std::string results_file = create_results_file(("results_kernel2_skip.csv"), "Dimension,B_Sparsity,C_Sparsity,Unzipper_Time1,Unzipper_Time2,Unzipper_Time4,Unzipper_Time5", "kernel2_all");
+    // std::string results_file = create_results_file(("results_kernel3_paper_taco.csv"), "Dimension,B_Sparsity,C_Sparsity,TACO_time", "kernel3_all");
 
     for (size_t i = 0; i < sparsity_list.size(); i++)
     {
         for (size_t j = 0; j < sparsity_list.size(); j++)
         {
-            for (int dim : dims)
-            {
+            // for (int dim : dims)
+            // {
+            int dim = 10;
                 int B_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[i]);
                 COOMatrix B = generate_synthetic_matrix(dim, dim, B_nnz_per_row);
                 int C_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
                 COOMatrix C = generate_synthetic_matrix(dim, dim, C_nnz_per_row);
 
+                // int D_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
+                // COOMatrix D = generate_synthetic_matrix(dim, dim, C_nnz_per_row);
+
                 // COOMatrix B = generate_matrix_from_data(3,3, {0,0,1,1,2}, {1,2,0,2,1} ,{1,2,3,1,8});
                 // COOMatrix C = generate_matrix_from_data(3,3, {0,1,1,2}, {2,0,2,1} ,{1,2,3,1});
 
-                double raw_kernel_time1 = raw_kernel_2_1(B, C);
-                double raw_kernel_time2 = raw_kernel_2_2(B, C);
+                double raw_kernel_time_ns = raw_kernel_2_ns(B, C);
+                double raw_kernel_time_as = raw_kernel_2_as(B, C);
+                double raw_kernel_time_rs = raw_kernel_2_rs(B, C);
+                double raw_kernel_time_af = raw_kernel_2_af(B, C);
+                // std::cout << "raw_kernel_time1: " << raw_kernel_time1 << std::endl;
+                // double raw_kernel_time2 = raw_kernel_2_2(B, C);
+                // std::cout << "raw_kernel_time2: " << raw_kernel_time2 << std::endl;
+                
+                Tensor<double> workspace;
+                double taco_time = taco_kernel_2_1(B, C, workspace);
+                // std::cout << "taco_time: " << taco_time << std::endl;
+                // std::cout << dim << sparsity_list[i]*100 << sparsity_list[j]*100 << raw_kernel_time1 << std::endl;
+
                 // double raw_kernel_time3 = raw_kernel_2_3(B, C);
-                double raw_kernel_time4 = raw_kernel_2_4(B, C);
-                double raw_kernel_time5 = raw_kernel_2_5(B, C);
-                // double raw_kernel_time6 = raw_kernel_2_5(B, C);
+                // double raw_kernel_time4 = raw_kernel_2_4(B, C);
+                // double raw_kernel_time5 = raw_kernel_2_5(B, C);
+                // double raw_kernel_time6 = raw_kernel_2_6(B, C);
                 
                 freeCOOMatrix(&B);
                 freeCOOMatrix(&C);
 
-                save_to_csv(results_file, dim, sparsity_list[i]*100, sparsity_list[j]*100, raw_kernel_time1, raw_kernel_time2, raw_kernel_time4, raw_kernel_time5);
+                // save_to_csv(results_file, dim, sparsity_list[i]*100, sparsity_list[j]*100, raw_kernel_time1);
 
                 std::cout   << "Dim: " << dim 
                             << ", B Sparsity: " << sparsity_list[i]*100 
                             << ", C Sparsity: " << sparsity_list[j]*100 
-                            << "\n\tUnziper Time 1: " << raw_kernel_time1
-                            << "\n\tUnziper Time 2: " << raw_kernel_time2
-                            << "\n\tUnziper Time 4: " << raw_kernel_time4
-                            << "\n\tUnziper Time 5: " << raw_kernel_time5 << std::endl;
-                            // << "\n\tUnziper Time 14: " << raw_kernel_time14 << std::endl;
+                            << "\n\tNS Kernel time: " << raw_kernel_time_ns
+                            << "\n\tAS Kernel time: " << raw_kernel_time_as
+                            << "\n\tRS Kernel time: " << raw_kernel_time_rs
+                            << "\n\tAF Kernel time: " << raw_kernel_time_af
+                            << "\n\tTACO Time: " << taco_time << std::endl;
                 std::cout << "=================================================" << std::endl;
                 // break;
-            }
+            // }
+            // break;
+        }
+        // break;        
+    }
+}
+
+void experiment_2_1(float sparsity_starter)
+{
+    float sparsity = sparsity_starter;
+    int minDim = 100;
+    int maxDim = 10000;
+    int sample_size = 20;
+
+    std::vector<float> sparsity_list = {0.01};
+    std::set<int> dims;
+    double logMin = std::log10(minDim);
+    double logMax = std::log10(maxDim);
+    for (int u = 0; u < sample_size; u++)
+    {
+        double logVal = logMin + (logMax - logMin) * u / (sample_size - 1);
+        int dim = (int)std::round(pow(10.0, logVal));
+        dims.insert(dim);
+    }
+
+    // std::string results_file = create_results_file(("results_kernel3_paper_taco.csv"), "Dimension,B_Sparsity,C_Sparsity,TACO_time", "kernel3_all");
+
+    for (size_t i = 0; i < sparsity_list.size(); i++)
+    {
+        for (size_t j = 0; j < sparsity_list.size(); j++)
+        {
+            // for (int dim : dims)
+            // {
+            int dim = 10000;
+                int B_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[i]);
+                COOMatrix B = generate_synthetic_matrix(dim, dim, B_nnz_per_row);
+                int C_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
+                COOMatrix C = generate_synthetic_matrix(dim, dim, C_nnz_per_row);
+                int D_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
+                COOMatrix D = generate_synthetic_matrix(dim, dim, D_nnz_per_row);
+
+                // int D_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
+                // COOMatrix B = generate_matrix_from_data(3,3, {0,0,1,2}, {1,2,0,1} ,{1.0,2.0,3.0,8.0});
+                // COOMatrix C = generate_matrix_from_data(3,3, {0,1,1,2}, {2,0,2,1} ,{1.0,2.0,3.0,1.0});
+                // COOMatrix D = generate_matrix_from_data(3,3, {0,0,1,2}, {0,1,0,2} ,{1.0,4.0,2.0,1.0});
+
+                // double raw_kernel_time_ns = raw_kernel_2_1ns(B, C, D);
+                // double raw_kernel_time_as = raw_kernel_2_1as(B, C, D);
+                // double raw_kernel_time_rs = raw_kernel_2_1rs(B, C, D);
+                double raw_kernel_time_af = raw_kernel_2_1af(B, C, D);
+                // std::cout << "raw_kernel_time1: " << raw_kernel_time1 << std::endl;
+                // double raw_kernel_time2 = raw_kernel_2_2(B, C);
+                // std::cout << "raw_kernel_time2: " << raw_kernel_time2 << std::endl;
+                
+                Tensor<double> workspace;
+                double taco_time = taco_kernel_3_1(B, C, D, workspace);
+                // std::cout << "taco_time: " << taco_time << std::endl;
+                // std::cout << dim << sparsity_list[i]*100 << sparsity_list[j]*100 << raw_kernel_time1 << std::endl;
+
+                // double raw_kernel_time3 = raw_kernel_2_3(B, C);
+                // double raw_kernel_time4 = raw_kernel_2_4(B, C);
+                // double raw_kernel_time5 = raw_kernel_2_5(B, C);
+                // double raw_kernel_time6 = raw_kernel_2_6(B, C);
+                
+                freeCOOMatrix(&B);
+                freeCOOMatrix(&C);
+                freeCOOMatrix(&D);
+
+                // save_to_csv(results_file, dim, sparsity_list[i]*100, sparsity_list[j]*100, raw_kernel_time1);
+
+                std::cout   << "Dim: " << dim 
+                            << ", B Sparsity: " << sparsity_list[i]*100 
+                            << ", C Sparsity: " << sparsity_list[j]*100 
+                            // << "\n\tNS Kernel time: " << raw_kernel_time_ns
+                            // << "\n\tAS Kernel time: " << raw_kernel_time_as
+                            // << "\n\tRS Kernel time: " << raw_kernel_time_rs
+                            << "\n\tAF Kernel time: " << raw_kernel_time_af
+                            << "\n\tTACO Time: " << taco_time << std::endl;
+                std::cout << "=================================================" << std::endl;
+                // break;
+            // }
+            // break;
+        }
+        // break;        
+    }
+}
+
+void experiment_3_1(float sparsity_starter)
+{
+    float sparsity = sparsity_starter;
+    int minDim = 100;
+    int maxDim = 10000;
+    int sample_size = 20;
+
+    std::vector<float> sparsity_list = {0.01};
+    std::set<int> dims;
+    double logMin = std::log10(minDim);
+    double logMax = std::log10(maxDim);
+    for (int u = 0; u < sample_size; u++)
+    {
+        double logVal = logMin + (logMax - logMin) * u / (sample_size - 1);
+        int dim = (int)std::round(pow(10.0, logVal));
+        dims.insert(dim);
+    }
+
+    // std::string results_file = create_results_file(("results_kernel3_paper_taco.csv"), "Dimension,B_Sparsity,C_Sparsity,TACO_time", "kernel3_all");
+
+    for (size_t i = 0; i < sparsity_list.size(); i++)
+    {
+        for (size_t j = 0; j < sparsity_list.size(); j++)
+        {
+            // for (int dim : dims)
+            // {
+            int dim = 10000;
+                int B_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[i]);
+                COOMatrix B = generate_synthetic_matrix(dim, dim, B_nnz_per_row);
+                int C_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
+                COOMatrix C = generate_synthetic_matrix(dim, dim, C_nnz_per_row);
+                int D_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
+                COOMatrix D = generate_synthetic_matrix(dim, dim, D_nnz_per_row);
+
+                // int D_nnz_per_row = calculate_nnz_per_row(dim, sparsity_list[j]);
+                // COOMatrix B = generate_matrix_from_data(3,3, {0,0,1,2}, {1,2,0,1} ,{1.0,2.0,3.0,8.0});
+                // COOMatrix C = generate_matrix_from_data(3,3, {0,1,1,2}, {2,0,2,1} ,{1.0,2.0,3.0,1.0});
+                // COOMatrix D = generate_matrix_from_data(3,3, {0,0,1,2}, {0,1,0,2} ,{1.0,4.0,2.0,1.0});
+
+                // double raw_kernel_time_ns = raw_kernel_2_1ns(B, C, D);
+                // double raw_kernel_time_as = raw_kernel_2_1as(B, C, D);
+                // double raw_kernel_time_rs = raw_kernel_2_1rs(B, C, D);
+                double raw_kernel_time_af = raw_kernel_2_1af(B, C, D);
+                // std::cout << "raw_kernel_time1: " << raw_kernel_time1 << std::endl;
+                // double raw_kernel_time2 = raw_kernel_2_2(B, C);
+                // std::cout << "raw_kernel_time2: " << raw_kernel_time2 << std::endl;
+                
+                Tensor<double> workspace;
+                double taco_time = taco_kernel_3_1(B, C, D, workspace);
+                // std::cout << "taco_time: " << taco_time << std::endl;
+                // std::cout << dim << sparsity_list[i]*100 << sparsity_list[j]*100 << raw_kernel_time1 << std::endl;
+
+                // double raw_kernel_time3 = raw_kernel_2_3(B, C);
+                // double raw_kernel_time4 = raw_kernel_2_4(B, C);
+                // double raw_kernel_time5 = raw_kernel_2_5(B, C);
+                // double raw_kernel_time6 = raw_kernel_2_6(B, C);
+                
+                freeCOOMatrix(&B);
+                freeCOOMatrix(&C);
+                freeCOOMatrix(&D);
+
+                // save_to_csv(results_file, dim, sparsity_list[i]*100, sparsity_list[j]*100, raw_kernel_time1);
+
+                std::cout   << "Dim: " << dim 
+                            << ", B Sparsity: " << sparsity_list[i]*100 
+                            << ", C Sparsity: " << sparsity_list[j]*100 
+                            // << "\n\tNS Kernel time: " << raw_kernel_time_ns
+                            // << "\n\tAS Kernel time: " << raw_kernel_time_as
+                            // << "\n\tRS Kernel time: " << raw_kernel_time_rs
+                            << "\n\tAF Kernel time: " << raw_kernel_time_af
+                            << "\n\tTACO Time: " << taco_time << std::endl;
+                std::cout << "=================================================" << std::endl;
+                // break;
+            // }
             // break;
         }
         // break;        
@@ -391,10 +566,10 @@ int main(int argc, char *argv[])
     {
     case 1:
         experiment_1(sparsity_starter);
-        // break;
+        break;
     case 2:
         /* Call the TACO experiment3 - TACO Kernel*/
-        experiment_2(sparsity_starter);
+        experiment_2_1(sparsity_starter);
         break;
     case 3:
         experiment_3(sparsity_starter);

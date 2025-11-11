@@ -771,8 +771,703 @@ static CSRMatrix* _raw_kernel_1_35(const CSRMatrix *B, const CSCMatrix *C) {
     return A;
 }
 
+static int int_cmp(const void *a, const void *b) {
+    int ia = *(const int*)a;
+    int ib = *(const int*)b;
+    return (ia < ib) ? -1 : (ia > ib);
+}
+
+// DONE AS
+CSRMatrix* _raw_kernel_2_as(const CSRMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d) * C(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    // row_ptr for A (n+1), we'll fill progressively
+    int *row_ptr = (int*)calloc(n + 1, sizeof(int));
+    if (!row_ptr) { perror("calloc row_ptr"); exit(1); }
+
+    // initial capacity for col_ind/val; will grow as needed
+    int capacity = (B->nnz > 0 ? B->nnz : 1); // heuristic lower bound
+    int *col_ind = (int*)malloc(capacity * sizeof(int));
+    double *val = (double*)malloc(capacity * sizeof(double));
+    if (!col_ind || !val) { perror("malloc col_ind/val"); exit(1); }
+
+    // SPA temporary arrays:
+    // accum: dense accumulator of length m (columns), reused per row
+    // marker: int array length m, initialized to -1; marker[j] != -1 means j in cols_seen
+    double *accum = (double*)calloc(m, sizeof(double));
+    int *marker = (int*)malloc(m * sizeof(int));
+    if (!accum || !marker) { perror("SPA alloc"); exit(1); }
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    // buffer to hold columns seen in current row
+    int *cols_seen = (int*)malloc(m * sizeof(int));
+    if (!cols_seen) { perror("cols_seen malloc"); exit(1); }
+
+    int nnz = 0;
+    row_ptr[0] = 0;
+
+    for (int i = 0; i < n; i++) {
+        int seen_count = 0;
+
+        // UN loop: iterate k sparsely over nonzeros in row i of B
+        for (int pB = B->row_ptr[i]; pB < B->row_ptr[i + 1]; pB++) {
+            int k = B->col_ind[pB];
+            double bval = B->val[pB];
+
+            // iterate nonzeros in row k of C (sparse)
+            for (int pC = C->row_ptr[k]; pC < C->row_ptr[k + 1]; pC++) {
+                int j = C->col_ind[pC];
+                double cval = C->val[pC];
+                double prod = bval * cval;
+
+                if (marker[j] == -1) {
+                    // first time we touch column j for this row i
+                    marker[j] = seen_count;
+                    cols_seen[seen_count] = j;
+                    accum[j] = prod;
+                    seen_count++;
+                } else {
+                    // already seen, accumulate
+                    accum[j] += prod;
+                }
+            }
+        }
+
+        if (seen_count > 0) {
+            // sort cols_seen[0..seen_count-1] so CSR has sorted column indices
+            qsort(cols_seen, seen_count, sizeof(int), int_cmp);
+
+            // append sorted entries to col_ind/val, resizing if necessary
+            for (int t = 0; t < seen_count; t++) {
+                int j = cols_seen[t];
+                double v = accum[j];
+                // optional tiny threshold to drop numerical noise
+                if (fabs(v) <= 1e-15) {
+                    // treat as zero; clean up marker & accum and continue
+                    accum[j] = 0.0;
+                    marker[j] = -1;
+                    continue;
+                }
+
+                if (nnz >= capacity) {
+                    capacity <<= 1;
+                    if (capacity < 1) capacity = 1;
+                    col_ind = (int*)realloc(col_ind, capacity * sizeof(int));
+                    val = (double*)realloc(val, capacity * sizeof(double));
+                    if (!col_ind || !val) { perror("realloc"); exit(1); }
+                }
+                col_ind[nnz] = j;
+                val[nnz] = v;
+                nnz++;
+
+                // cleanup for next row
+                accum[j] = 0.0;
+                marker[j] = -1;
+            }
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    // free SPA temporaries
+    free(accum);
+    free(marker);
+    free(cols_seen);
+
+    // shrink-to-fit col_ind/val
+    if (nnz < capacity) {
+        col_ind = (int*)realloc(col_ind, nnz * sizeof(int));
+        val = (double*)realloc(val, nnz * sizeof(double));
+        // it's okay if realloc returns NULL when nnz==0 for some libc; we skip check
+    }
+
+    CSRMatrix *A = (CSRMatrix*)malloc(sizeof(CSRMatrix));
+    if (!A) { perror("malloc A"); exit(1); }
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+
 // Multiply A = B * C (Mat-Mul)
 // A(i, j) = B(i, k) * C(k, j)
+// DONE NS
+static CSRMatrix* _raw_kernel_2_ns(const CSRMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d) * C(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    // Prepare CSR data (dynamic arrays)
+    int *row_ptr = (int *)malloc((n + 1) * sizeof(int));
+    int *col_ind = NULL;
+    double *val = NULL;
+    int nnz = 0;
+
+    // Sparse accumulator (SPA)
+    double *spa = (double *)calloc(m, sizeof(double));
+    int *marker = (int *)malloc(m * sizeof(int));
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    row_ptr[0] = 0;
+
+    // Iterate over rows of B
+    for (int i = 0; i < n; i++) {
+        int row_nnz = 0;
+
+        // Iterate over columns of B (reduction axis k)
+        for (int k = 0; k < B->cols; k++) {
+            double b_val = B->get_element(i, k);
+            if (b_val == 0.0) continue;
+
+            // For every j (explicitly)
+            for (int j = 0; j < C->cols; j++) {
+                double c_val = C->get_element(k, j);
+                if (c_val == 0.0) continue;
+
+                if (marker[j] != i) {  // not yet touched in this row
+                    marker[j] = i;
+                    spa[j] = b_val * c_val;
+                } else {
+                    spa[j] += b_val * c_val;
+                }
+            }
+        }
+
+        // Compact the SPA to CSR row
+        for (int j = 0; j < m; j++) {
+            if (marker[j] == i && spa[j] != 0.0) {
+                nnz++;
+                col_ind = (int *)realloc(col_ind, nnz * sizeof(int));
+                val = (double *)realloc(val, nnz * sizeof(double));
+                col_ind[nnz - 1] = j;
+                val[nnz - 1] = spa[j];
+                spa[j] = 0.0;  // reset
+            }
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    free(spa);
+    free(marker);
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (Mat-Mul)
+// A(i, j) = B(i, k) * C(k, j)
+static CSRMatrix* _raw_kernel_2_af(const CSRMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d) * C(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+    int p = B->cols; // reduction dim
+
+    // Pre-allocate space; we'll resize later if needed
+    int capacity = n * 8;  // initial guess
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val   = (double *)malloc(capacity * sizeof(double));
+
+    int nnz = 0;
+    row_ptr[0] = 0;
+
+    // Sparse accumulator (SPA) per row
+    double *accum = (double *)calloc(m, sizeof(double));
+    int *marker = (int *)malloc(m * sizeof(int));
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    for (int i = 0; i < n; i++) {
+        std::vector<int> cols_seen;
+
+        // iterate through dense k
+        for (int k = 0; k < p; k++) {
+            double b_val = B->get_element(i, k);
+            if (b_val == 0.0) continue;
+
+            // iterate sparse over row k of C
+            for (int pC = C->row_ptr[k]; pC < C->row_ptr[k + 1]; pC++) {
+                int j = C->col_ind[pC];
+                double c_val = C->val[pC];
+
+                if (marker[j] != i) {
+                    marker[j] = i;
+                    accum[j] = b_val * c_val;
+                    cols_seen.push_back(j);
+                } else {
+                    accum[j] += b_val * c_val;
+                }
+            }
+        }
+
+        // flush SPA into CSR arrays
+        for (int idx : cols_seen) {
+            if (nnz >= capacity) {
+                capacity *= 2;
+                col_ind = (int *)realloc(col_ind, capacity * sizeof(int));
+                val     = (double *)realloc(val, capacity * sizeof(double));
+            }
+            col_ind[nnz] = idx;
+            val[nnz] = accum[idx];
+            nnz++;
+            accum[idx] = 0.0; // reset
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    free(accum);
+    free(marker);
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (Mat-Mul)
+// A(i, j) = B(i, k) * C(k, j)
+// DONE RS
+static CSRMatrix* _raw_kernel_2_rs(const CSRMatrix *B, const CSRMatrix *C) {
+    if (B->cols != C->rows) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d) * C(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    // Prepare CSR data (dynamic arrays)
+    int *row_ptr = (int *)malloc((n + 1) * sizeof(int));
+    int *col_ind = NULL;
+    double *val = NULL;
+    int nnz = 0;
+
+    // Sparse accumulator (SPA)
+    double *spa = (double *)calloc(m, sizeof(double));
+    int *marker = (int *)malloc(m * sizeof(int));
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    row_ptr[0] = 0;
+
+    // Iterate over rows of B
+    for (int i = 0; i < n; i++) {
+        int row_nnz = 0;
+
+        // Iterate over columns of B (reduction axis k)
+        for (int ki = B->row_ptr[i]; ki < B->row_ptr[i+1]; ki++)
+        {
+            double b_val = B->val[ki];
+            int k = B->col_ind[ki];
+            for (int j = 0; j < C->cols; j++)
+            {
+                double c_val = C->get_element(k, j);
+                if (c_val == 0.0) continue;
+
+                if (marker[j] != i)
+                {
+                    marker[j] = i;
+                    spa[j] = b_val * c_val;
+                } else {
+                    spa[j] += b_val * c_val;
+                }
+            }
+        }
+
+        // Compact the SPA to CSR row
+        for (int j = 0; j < m; j++) {
+            if (marker[j] == i && spa[j] != 0.0) {
+                nnz++;
+                col_ind = (int *)realloc(col_ind, nnz * sizeof(int));
+                val = (double *)realloc(val, nnz * sizeof(double));
+                col_ind[nnz - 1] = j;
+                val[nnz - 1] = spa[j];
+                spa[j] = 0.0;  // reset
+            }
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    free(spa);
+    free(marker);
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (Mat-Mul)
+// A(i, j) = B(i, k) * C(k, j) * D(j,k)
+// DONE
+static CSRMatrix* _raw_kernel_2_1ns(const CSRMatrix *B, const CSRMatrix *C, const CSRMatrix *D) {
+    if (B->cols != C->rows || C->rows != D->rows || C->cols != D->cols) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d), C(%d,%d), D(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols, D->rows, D->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    int *row_ptr = (int *)malloc((n + 1) * sizeof(int));
+    int *col_ind = NULL;
+    double *val = NULL;
+    int nnz = 0;
+
+    // Sparse accumulator (SPA)
+    double *spa = (double *)calloc(m, sizeof(double));
+    int *marker = (int *)malloc(m * sizeof(int));
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    row_ptr[0] = 0;
+
+    // Iterate over rows of B
+    for (int i = 0; i < n; i++) {
+        // Iterate over nonzeros in B[i, :]
+        // Iterate over columns of B
+        for (int k = 0; k < B->cols; k++) {
+            double b_val = B->get_element(i, k);
+            if (b_val == 0.0) continue;
+
+            // For every j (explicitly)
+            for (int j = 0; j < C->cols; j++) {
+                double c_val = C->get_element(k, j);
+                if (c_val == 0.0) continue;
+
+                double d_val = D->get_element(j, k);
+                if (d_val == 0.0) continue;
+
+                double prod = b_val * c_val * d_val;
+
+                if (marker[j] != i) {
+                    marker[j] = i;
+                    spa[j] = prod;
+                } else {
+                    spa[j] += prod;
+                }
+            }
+        }
+
+        // Compact SPA into CSR row
+        for (int j = 0; j < m; j++) {
+            if (marker[j] == i && spa[j] != 0.0) {
+                nnz++;
+                col_ind = (int *)realloc(col_ind, nnz * sizeof(int));
+                val = (double *)realloc(val, nnz * sizeof(double));
+                col_ind[nnz - 1] = j;
+                val[nnz - 1] = spa[j];
+                spa[j] = 0.0;
+            }
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    free(spa);
+    free(marker);
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (Mat-Mul)
+// A(i, j) = B(i, k) * C(k, j) * D(j,k)
+// DONE
+static CSRMatrix* _raw_kernel_2_1as(const CSRMatrix *B, const CSRMatrix *C, const CSRMatrix *D) {
+    if (B->cols != C->rows || C->rows != D->rows || C->cols != D->cols) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d), C(%d,%d), D(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols, D->rows, D->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    int *row_ptr = (int *)malloc((n + 1) * sizeof(int));
+    int *col_ind = NULL;
+    double *val = NULL;
+    int nnz = 0;
+
+    // Sparse accumulator (SPA)
+    double *spa = (double *)calloc(m, sizeof(double));
+    int *marker = (int *)malloc(m * sizeof(int));
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    row_ptr[0] = 0;
+
+    // Iterate over rows of B
+    for (int i = 0; i < n; i++) {
+        // Iterate over nonzeros in B[i, :]
+        for (int idx_B = B->row_ptr[i]; idx_B < B->row_ptr[i+1]; idx_B++) {
+            int k = B->col_ind[idx_B];
+            double b_val = B->val[idx_B];
+            if (b_val == 0.0) continue;
+
+            // For every j (explicitly)
+            for (int idx_C = C->row_ptr[k]; idx_C < C->row_ptr[k+1]; idx_C++)
+            {
+                int j = C->col_ind[idx_C];
+                double c_val = C->val[idx_C];
+                double temp_product = 0.0;
+                if (c_val == 0.0) continue;
+
+                for (int idx_D = D->row_ptr[j]; idx_D < D->row_ptr[j+1]; idx_D++)
+                {
+                    double d_val = D->val[idx_D];
+                    if (d_val == 0.0) continue;
+
+                    if (D->col_ind[idx_D] != k) continue;
+                    temp_product = c_val * d_val;
+                    break;
+                }
+
+                if (temp_product != 0.0)
+                {
+                    if (marker[j] != i) {
+                        marker[j] = i;
+                        spa[j] = (b_val * temp_product);
+                    } else {
+                        spa[j] += (b_val * temp_product);
+                    }
+                }
+            }
+        }
+
+        // Compact SPA into CSR row
+        for (int j = 0; j < m; j++) {
+            if (marker[j] == i && spa[j] != 0.0) {
+                nnz++;
+                col_ind = (int *)realloc(col_ind, nnz * sizeof(int));
+                val = (double *)realloc(val, nnz * sizeof(double));
+                col_ind[nnz - 1] = j;
+                val[nnz - 1] = spa[j];
+                spa[j] = 0.0;
+            }
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    free(spa);
+    free(marker);
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (Mat-Mul)
+// A(i, j) = B(i, k) * C(k, j) * D(j,k)
+// DONE
+static CSRMatrix* _raw_kernel_2_1rs(const CSRMatrix *B, const CSRMatrix *C, const CSRMatrix *D) {
+    if (B->cols != C->rows || C->rows != D->rows || C->cols != D->cols) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d), C(%d,%d), D(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols, D->rows, D->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    int *row_ptr = (int *)malloc((n + 1) * sizeof(int));
+    int *col_ind = NULL;
+    double *val = NULL;
+    int nnz = 0;
+
+    // Sparse accumulator (SPA)
+    double *spa = (double *)calloc(m, sizeof(double));
+    int *marker = (int *)malloc(m * sizeof(int));
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    row_ptr[0] = 0;
+
+    // Iterate over rows of B
+    for (int i = 0; i < n; i++) {
+        // Iterate over nonzeros in B[i, :]
+        for (int idx_B = B->row_ptr[i]; idx_B < B->row_ptr[i+1]; idx_B++) {
+            int k = B->col_ind[idx_B];
+            double b_val = B->val[idx_B];
+
+            // For every j (explicitly)
+            for (int j = 0; j < C->cols; j++) {
+                double c_val = C->get_element(k, j);
+                if (c_val == 0.0) continue;
+
+                double d_val = D->get_element(j, k);
+                if (d_val == 0.0) continue;
+
+                double prod = b_val * c_val * d_val;
+
+                if (marker[j] != i) {
+                    marker[j] = i;
+                    spa[j] = prod;
+                } else {
+                    spa[j] += prod;
+                }
+            }
+        }
+
+        // Compact SPA into CSR row
+        for (int j = 0; j < m; j++) {
+            if (marker[j] == i && spa[j] != 0.0) {
+                nnz++;
+                col_ind = (int *)realloc(col_ind, nnz * sizeof(int));
+                val = (double *)realloc(val, nnz * sizeof(double));
+                col_ind[nnz - 1] = j;
+                val[nnz - 1] = spa[j];
+                spa[j] = 0.0;
+            }
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    free(spa);
+    free(marker);
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (Mat-Mul)
+// A(i, j) = B(i, k) * C(k, j) * D(j,k)
+static CSRMatrix* _raw_kernel_2_1af(const CSRMatrix *B, const CSRMatrix *C, const CSRMatrix *D) {
+    if (B->cols != C->rows || C->rows != D->rows || C->cols != D->cols) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d), C(%d,%d), D(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols, D->rows, D->cols);
+        exit(1);
+    }
+
+    int n = B->rows;
+    int m = C->cols;
+
+    int *row_ptr = (int *)malloc((n + 1) * sizeof(int));
+    int *col_ind = NULL;
+    double *val = NULL;
+    int nnz = 0;
+
+    // Sparse accumulator (SPA)
+    double *spa = (double *)calloc(m, sizeof(double));
+    int *marker = (int *)malloc(m * sizeof(int));
+    for (int j = 0; j < m; j++) marker[j] = -1;
+
+    row_ptr[0] = 0;
+
+    // Iterate over rows of B
+    for (int i = 0; i < n; i++) {
+        // Iterate over nonzeros in B[i, :]
+        for (int idx_B = B->row_ptr[i]; idx_B < B->row_ptr[i+1]; idx_B++) {
+            int k = B->col_ind[idx_B];
+            double b_val = B->val[idx_B];
+            if (b_val == 0.0) continue;
+
+            // For every j (explicitly)
+            for (int idx_C = C->row_ptr[k]; idx_C < C->row_ptr[k+1]; idx_C++)
+            {
+                int j = C->col_ind[idx_C];
+                double c_val = C->val[idx_C];
+                if (c_val == 0.0) continue;
+
+                double d_val = D->get_element(j,k);
+                if (d_val == 0.0) continue;
+
+                double prod = b_val * c_val * d_val;
+                
+                if (marker[j] != i) {
+                    marker[j] = i;
+                    spa[j] = prod;
+                } else {
+                    spa[j] += prod;
+                }
+            }
+        }
+
+        // Compact SPA into CSR row
+        for (int j = 0; j < m; j++) {
+            if (marker[j] == i && spa[j] != 0.0) {
+                nnz++;
+                col_ind = (int *)realloc(col_ind, nnz * sizeof(int));
+                val = (double *)realloc(val, nnz * sizeof(double));
+                col_ind[nnz - 1] = j;
+                val[nnz - 1] = spa[j];
+                spa[j] = 0.0;
+            }
+        }
+
+        row_ptr[i + 1] = nnz;
+    }
+
+    free(spa);
+    free(marker);
+
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
+    return A;
+}
+
+// Multiply A = B * C (Mat-Mul)
+// A(i, j) = B(i, k) * C(k, j)
+// DONE
 static CSRMatrix* _raw_kernel_2_1(const CSRMatrix *B, const CSRMatrix *C) {
     if (B->cols != C->rows) {
         fprintf(stderr, "Dimension mismatch: B(%d,%d) * C(%d,%d)\n",
@@ -797,6 +1492,7 @@ static CSRMatrix* _raw_kernel_2_1(const CSRMatrix *B, const CSRMatrix *C) {
             for (int p = B->row_ptr[i]; p < B->row_ptr[i+1]; p++)
             {
                 int j = B->col_ind[p];
+                // search on C
                 for (int q = C->row_ptr[j]; q < C->row_ptr[j+1]; q++)
                 {
                     if (C->col_ind[q] == k)
@@ -858,7 +1554,7 @@ static CSRMatrix* _raw_kernel_2_2(const CSRMatrix *B, const CSCMatrix *C) {
                 // search on C
                 for (int q = C->col_ptr[k]; q < C->col_ptr[k+1]; q++)
                 {
-                    if (C->row_ind[q] == j)
+                    if (C->row_ind[q] == B->col_ind[p])
                     {
                         accum += (B->val[p] * C->val[q]);
                         break;
@@ -1076,109 +1772,43 @@ static CSRMatrix* _raw_kernel_2_5(const CSCMatrix *B, const CSCMatrix *C) {
 }
 
 
-// // A(i, j) = B(i, k)  * C(k, j) * D(k, j)
-// static CSRMatrix* _raw_kernel_3_1(const CSRMatrix *B, const CSRMatrix *C, const CSRMatrix *D) {
-//     if (B->cols != C->rows || C->rows != D->rows || C->cols != D->cols) {
-//         fprintf(stderr, "Dimension mismatch: B(%d,%d), C(%d,%d), D(%d,%d)\n",
-//                 B->rows, B->cols, C->rows, C->cols, D->rows, D->cols);
-//         exit(1);
-//     }
+// A(i, j) = B(i, k)  * C(k, j) * D(k, j)
+static CSRMatrix* _raw_kernel_3_1(const CSRMatrix *B, const CSRMatrix *C, const CSRMatrix *D) {
+    if (B->cols != C->rows || C->rows != D->rows || C->cols != D->cols) {
+        fprintf(stderr, "Dimension mismatch: B(%d,%d), C(%d,%d), D(%d,%d)\n",
+                B->rows, B->cols, C->rows, C->cols, D->rows, D->cols);
+        exit(1);
+    }
 
-//     int n = B->rows;
-//     int m = C->cols;
-//     int *row_ptr = (int *)calloc(n + 1, sizeof(int));
-//     int capacity = B->nnz * 4; // heuristic
-//     int *col_ind = (int *)malloc(capacity * sizeof(int));
-//     double *val = (double *)malloc(capacity * sizeof(double));
+    int n = B->rows;
+    int m = C->cols;
+    int *row_ptr = (int *)calloc(n + 1, sizeof(int));
+    int capacity = B->nnz * 4; // heuristic
+    int *col_ind = (int *)malloc(capacity * sizeof(int));
+    double *val = (double *)malloc(capacity * sizeof(double));
+    int nnz = 0;
+    // iterate through the rows of B
+    for (int i = 0; i < n; i++)
+    {
+        // get individual values on the row i of B
+        for (int p = B->row_ptr[i]; p < B->row_ptr[i+1]; p++)
+        {
+            int k = B->col_ind[p];
+            
+        }
+    }
 
-//     // Temporary buffers
-//     double *accum = (double *)calloc(m, sizeof(double));
-//     char *flag = (char *)calloc(m, sizeof(char));
-//     int *cols_in_rows = (int *)malloc(m * sizeof(int));
+    CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
+    A->rows = n;
+    A->cols = m;
+    A->nnz = nnz;
+    A->row_ptr = row_ptr;
+    A->col_ind = col_ind;
+    A->val = val;
 
-//     int nnz = 0;
-//     row_ptr[0] = 0;
-
-//     for (int i = 0; i < n; i++) {
-//         int count = 0;
-
-//         // iterate over nonzeros of B[i,*]
-//         for (int p = B->row_ptr[i]; p < B->row_ptr[i + 1]; p++) {
-//             int k = B->col_ind[p];
-//             double bval = B->val[p];
-
-//             // merge multiply row k of C and D
-//             int qc = C->row_ptr[k];
-//             int qd = D->row_ptr[k];
-
-//             // both C and D are sparse; merge step
-//             while (qc < C->row_ptr[k + 1] && qd < D->row_ptr[k + 1]) {
-//                 int jc = C->col_ind[qc];
-//                 int jd = D->col_ind[qd];
-
-//                 if (jc == jd) {
-//                     int j = jc;
-//                     double cval = C->val[qc];
-//                     double dval = D->val[qd];
-//                     double prod = bval * cval * dval;
-
-//                     if (!flag[j]) {
-//                         flag[j] = 1;
-//                         cols_in_rows[count++] = j;
-//                         accum[j] = prod;
-//                     } else {
-//                         accum[j] += prod;
-//                     }
-
-//                     qc++;
-//                     qd++;
-//                 } else if (jc < jd) {
-//                     qc++;
-//                 } else {
-//                     qd++;
-//                 }
-//             }
-//         }
-
-//         // sort columns
-//         qsort(cols_in_rows, count, sizeof(int), cmp_int);
-
-//         // output this row
-//         for (int a = 0; a < count; a++) {
-//             int j = cols_in_rows[a];
-//             double v = accum[j];
-//             if (v != 0.0) {
-//                 if (nnz >= capacity) {
-//                     capacity *= 2;
-//                     col_ind = (int *)realloc(col_ind, capacity * sizeof(int));
-//                     val = (double *)realloc(val, capacity * sizeof(double));
-//                 }
-//                 col_ind[nnz] = j;
-//                 val[nnz] = v;
-//                 nnz++;
-//             }
-//             flag[j] = 0;
-//             accum[j] = 0.0;
-//         }
-
-//         row_ptr[i + 1] = nnz;
-//     }
-
-//     free(accum);
-//     free(flag);
-//     free(cols_in_rows);
-
-//     CSRMatrix *A = (CSRMatrix *)malloc(sizeof(CSRMatrix));
-//     A->rows = n;
-//     A->cols = m;
-//     A->nnz = nnz;
-//     A->row_ptr = row_ptr;
-//     A->col_ind = col_ind;
-//     A->val = val;
-
-//     // A->print_dense();
-//     return A;
-// }
+    // A->print_dense();
+    return A;
+}
 
 // A(i) = B(i, j) * C(j, i)
 static CSRMatrix* _raw_kernel_4_1(const CSRMatrix *B, const CSRMatrix *C) {
@@ -1379,7 +2009,7 @@ double raw_kernel_3_1(const COOMatrix &B, const COOMatrix &C, const COOMatrix &D
     COO_to_CSR(C, csrC);
     COO_to_CSR(D, csrD);
     clock_gettime(CLOCK_MONOTONIC, &start);
-    // CSRMatrix* result = _raw_kernel_3_1(&csrB, &csrC, &csrD);
+    CSRMatrix* result = _raw_kernel_3_1(&csrB, &csrC, &csrD);
     // std::cout << "=============== Unzipper Result ===============" << std::endl;
     // result->print();
     // std::cout << "===============================================" << std::endl;
@@ -1709,6 +2339,175 @@ double raw_kernel_2_1(const COOMatrix &B, const COOMatrix &C)
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     return elapsed;
 }
+
+double raw_kernel_2_ns(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_ns(&csrB, &csrC);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "============ CSR CSR CSR NS ==============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_as(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_as(&csrB, &csrC);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "============ CSR CSR CSR AS ==============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_rs(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_rs(&csrB, &csrC);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "============ CSR CSR CSR RS ==============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_af(const COOMatrix &B, const COOMatrix &C)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_af(&csrB, &csrC);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "============ CSR CSR CSR AF ==============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_1ns(const COOMatrix &B, const COOMatrix &C, const COOMatrix &D)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC, csrD;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    COO_to_CSR(D, csrD);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_1ns(&csrB, &csrC, &csrD);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "============ CSR CSR CSR CSR NS ==============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(&csrD);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_1as(const COOMatrix &B, const COOMatrix &C, const COOMatrix &D)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC, csrD;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    COO_to_CSR(D, csrD);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_1as(&csrB, &csrC, &csrD);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    std::cout << "============ CSR CSR CSR CSR AS ==============" << std::endl;
+    result->print();
+    std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(&csrD);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_1rs(const COOMatrix &B, const COOMatrix &C, const COOMatrix &D)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC, csrD;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    COO_to_CSR(D, csrD);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_1rs(&csrB, &csrC, &csrD);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "============ CSR CSR CSR CSR RS ==============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(&csrD);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
+double raw_kernel_2_1af(const COOMatrix &B, const COOMatrix &C, const COOMatrix &D)
+{
+    struct timespec start, end;
+    CSRMatrix csrB, csrC, csrD;
+    COO_to_CSR(B, csrB);
+    COO_to_CSR(C, csrC);
+    COO_to_CSR(D, csrD);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CSRMatrix* result = _raw_kernel_2_1af(&csrB, &csrC, &csrD);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // std::cout << "============ CSR CSR CSR CSR AF ==============" << std::endl;
+    // result->print();
+    // std::cout << "=======================================" << std::endl;
+    freeCSRMatrix(&csrB);
+    freeCSRMatrix(&csrC);
+    freeCSRMatrix(&csrD);
+    freeCSRMatrix(result);
+    free(result);
+    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    return elapsed;
+}
+
 
 double raw_kernel_2_2(const COOMatrix &B, const COOMatrix &C)
 {

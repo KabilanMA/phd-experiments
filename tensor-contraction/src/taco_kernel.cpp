@@ -22,7 +22,7 @@ static double __taco_kernel_4_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
 // static double __taco_kernel_5_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &workspace);
 
 // A(i) = B(i, j) * C(j, i)
-double taco_kernel_4_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &workspace)
+double taco_kernel_4_1(const COOMatrix &B, const COOMatrix &C, const COOMatrix &D, Tensor<double> &workspace)
 {
     Format csr({Dense, Sparse});
     Format csc({Sparse, Dense});
@@ -33,11 +33,14 @@ double taco_kernel_4_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &w
     generate_taco_tensor_from_coo(B, B_taco);
     Tensor<double> C_taco({C.rows, C.cols}, csr);
     generate_taco_tensor_from_coo(C, C_taco);
+    Tensor<double> D_taco({D.rows, D.cols}, csr);
+    generate_taco_tensor_from_coo(D, D_taco);
 
     B_taco.pack();
     C_taco.pack();
+    D_taco.pack();
 
-    double elapsed = __taco_kernel_4_1(B_taco, C_taco, workspace);
+    double elapsed = __taco_kernel_4_1(B_taco, C_taco, D_taco, workspace);
 
     // std::cout << "=============== TACO Result ===============" << std::endl;
     // std::cout << workspace << std::endl;
@@ -49,7 +52,7 @@ double taco_kernel_4_1(const COOMatrix &B, const COOMatrix &C, Tensor<double> &w
 }
 
 // A(i) = B(i, j) * C(j, i)
-static double __taco_kernel_4_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &workspace)
+static double __taco_kernel_4_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &D, Tensor<double> &workspace)
 {
     struct timespec start, end;
     Format csr({Dense, Sparse});
@@ -111,7 +114,7 @@ double taco_kernel_3_1(const COOMatrix &B, const COOMatrix &C, const COOMatrix &
     return elapsed;
 }
 
-// A(i, j) = B(i, k)  * C(k, j) * D(k, j)
+// A(i, j) = B(i, k)  * C(k, j) * D(j, k)
 static double __taco_kernel_3_1(Tensor<double> &B, Tensor<double> &C, Tensor<double> &D, Tensor<double> &workspace)
 {
     Format csr({Dense, Sparse});
@@ -120,20 +123,38 @@ static double __taco_kernel_3_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
     IndexVar i, j, k;
 
     Tensor<double> A({B.getDimension(0), C.getDimension(1)}, csr);
+
+    Tensor<double> D_t({D.getDimension(1), D.getDimension(0)}, csr);
     Tensor<double> temp({C.getDimension(0), C.getDimension(1)}, csr);
-    temp(k,j) = C(k,j) * D(k,j);
+
+    double elapsed = 0.0;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    D_t = D.transpose({1,0}, csr);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    elapsed += (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
+    temp(k,j) = C(k,j) * D_t(k,j);
+    // temp.compile();
+    // clock_gettime(CLOCK_MONOTONIC, &start);
+    // temp.assemble();
+    // temp.compute();
+    // clock_gettime(CLOCK_MONOTONIC, &end);
+    // elapsed += (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
     A(i,j) = B(i,k) * temp(k,j);
-    temp.compile();
     A.compile();
     clock_gettime(CLOCK_MONOTONIC, &start);
-    temp.assemble();
-    temp.compute();
     A.assemble();
     A.compute();
     clock_gettime(CLOCK_MONOTONIC, &end);
-    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    elapsed += (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+
     workspace = A;
-    return elapsed;
+    // std::cout << workspace << std::endl;
+    D_t = Tensor<double>();
+    // A = Tensor<double>();
+    return (elapsed);
 }
 
 // Multiply A = B * C (MatMul)
@@ -182,7 +203,7 @@ static double __taco_kernel_2_1(Tensor<double> &B, Tensor<double> &C, Tensor<dou
     A.compute();
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-    // workspace = A;
+    workspace = A;
     return elapsed;
 }
 
